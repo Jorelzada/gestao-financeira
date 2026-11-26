@@ -1,0 +1,502 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers ---
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAuthenticated() {
+      return isSignedIn() && (
+        request.auth.token.firebase.sign_in_provider == 'anonymous' ||
+        request.auth.token.email_verified == true
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidHexColor(val) {
+      return val is string && val.size() == 7 && val.matches('^#[0-9a-fA-F]{6}$');
+    }
+
+    function isValidDateStr(val) {
+      return val is string && val.size() == 10 && val.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidMonthStr(val) {
+      return val is string && val.size() == 7 && val.matches('^\\d{4}-\\d{2}$');
+    }
+
+    function isSafeInt(val, minVal, maxVal) {
+      return val is int && val >= minVal && val <= maxVal;
+    }
+
+    function isImmutableMeta() {
+      return incoming().userId == existing().userId &&
+             incoming().createdAt == existing().createdAt &&
+             incoming().updatedAt == request.time;
+    }
+
+    // --- Entity Validation Blueprints ---
+    function isValidUserSettings(data, userId) {
+      return data.keys().hasAll(['userId', 'displayAlias', 'theme', 'currency', 'seededDefaults', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'displayAlias', 'theme', 'currency', 'seededDefaults', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             data.displayAlias is string && data.displayAlias.size() >= 1 && data.displayAlias.size() <= 60 &&
+             data.theme in ['light', 'dark'] &&
+             data.currency in ['BRL'] &&
+             data.seededDefaults is bool &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidAccount(data, userId) {
+      return data.keys().hasAll(['userId', 'name', 'institution', 'type', 'initialBalanceCents', 'color', 'archived', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'name', 'institution', 'type', 'initialBalanceCents', 'color', 'archived', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 60 &&
+             data.institution is string && data.institution.size() <= 60 &&
+             data.type in ['checking', 'savings', 'wallet', 'investment'] &&
+             isSafeInt(data.initialBalanceCents, -100000000000, 100000000000) &&
+             isValidHexColor(data.color) &&
+             data.archived is bool &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(data, userId) {
+      return data.keys().hasAll(['userId', 'name', 'type', 'color', 'icon', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'name', 'type', 'color', 'icon', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 50 &&
+             data.type in ['income', 'expense'] &&
+             isValidHexColor(data.color) &&
+             data.icon is string && data.icon.size() >= 1 && data.icon.size() <= 32 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidCreditCard(data, userId) {
+      return data.keys().hasAll(['userId', 'name', 'brand', 'limitCents', 'closingDay', 'dueDay', 'color', 'archived', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'name', 'brand', 'limitCents', 'closingDay', 'dueDay', 'color', 'archived', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 60 &&
+             data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 30 &&
+             isSafeInt(data.limitCents, 0, 100000000000) &&
+             isSafeInt(data.closingDay, 1, 28) &&
+             isSafeInt(data.dueDay, 1, 28) &&
+             isValidHexColor(data.color) &&
+             data.archived is bool &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidTransaction(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'type', 'description', 'amountCents', 'date', 'categoryId',
+               'paymentMethod', 'accountId', 'cardId', 'invoiceMonth', 'status',
+               'installmentGroupId', 'installmentNumber', 'totalInstallments',
+               'recurrenceId', 'notes', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'type', 'description', 'amountCents', 'date', 'categoryId',
+               'paymentMethod', 'accountId', 'cardId', 'invoiceMonth', 'status',
+               'installmentGroupId', 'installmentNumber', 'totalInstallments',
+               'recurrenceId', 'notes', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId == userId &&
+             data.type in ['income', 'expense'] &&
+             data.description is string && data.description.size() >= 1 && data.description.size() <= 120 &&
+             isSafeInt(data.amountCents, 1, 100000000000) &&
+             isValidDateStr(data.date) &&
+             isValidId(data.categoryId) &&
+             data.paymentMethod in ['account', 'card'] &&
+             data.accountId is string && data.accountId.size() <= 128 &&
+             data.cardId is string && data.cardId.size() <= 128 &&
+             data.invoiceMonth is string && data.invoiceMonth.size() <= 7 &&
+             (data.paymentMethod == 'account'
+               ? (isValidId(data.accountId) && data.cardId == '' && data.invoiceMonth == '')
+               : (data.type == 'expense' && isValidId(data.cardId) && data.accountId == '' && isValidMonthStr(data.invoiceMonth))
+             ) &&
+             data.status in ['paid', 'pending'] &&
+             data.installmentGroupId is string && data.installmentGroupId.size() <= 128 &&
+             isSafeInt(data.installmentNumber, 1, 120) &&
+             isSafeInt(data.totalInstallments, 1, 120) &&
+             data.installmentNumber <= data.totalInstallments &&
+             data.recurrenceId is string && data.recurrenceId.size() <= 128 &&
+             data.notes is string && data.notes.size() <= 300 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidTransfer(data, userId) {
+      return data.keys().hasAll(['userId', 'fromAccountId', 'toAccountId', 'amountCents', 'date', 'description', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'fromAccountId', 'toAccountId', 'amountCents', 'date', 'description', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             isValidId(data.fromAccountId) &&
+             isValidId(data.toAccountId) &&
+             data.fromAccountId != data.toAccountId &&
+             isSafeInt(data.amountCents, 1, 100000000000) &&
+             isValidDateStr(data.date) &&
+             data.description is string && data.description.size() >= 1 && data.description.size() <= 120 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidInvoicePayment(data, userId) {
+      return data.keys().hasAll(['userId', 'cardId', 'accountId', 'invoiceMonth', 'amountCents', 'paidDate', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'cardId', 'accountId', 'invoiceMonth', 'amountCents', 'paidDate', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             isValidId(data.cardId) &&
+             isValidId(data.accountId) &&
+             isValidMonthStr(data.invoiceMonth) &&
+             isSafeInt(data.amountCents, 1, 100000000000) &&
+             isValidDateStr(data.paidDate) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidRecurrence(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'type', 'description', 'amountCents', 'categoryId',
+               'paymentMethod', 'accountId', 'cardId', 'dayOfMonth', 'frequency',
+               'active', 'lastGeneratedMonth', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'type', 'description', 'amountCents', 'categoryId',
+               'paymentMethod', 'accountId', 'cardId', 'dayOfMonth', 'frequency',
+               'active', 'lastGeneratedMonth', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId == userId &&
+             data.type in ['income', 'expense'] &&
+             data.description is string && data.description.size() >= 1 && data.description.size() <= 120 &&
+             isSafeInt(data.amountCents, 1, 100000000000) &&
+             isValidId(data.categoryId) &&
+             data.paymentMethod in ['account', 'card'] &&
+             data.accountId is string && data.accountId.size() <= 128 &&
+             data.cardId is string && data.cardId.size() <= 128 &&
+             (data.paymentMethod == 'account'
+               ? (isValidId(data.accountId) && data.cardId == '')
+               : (data.type == 'expense' && isValidId(data.cardId) && data.accountId == '')
+             ) &&
+             isSafeInt(data.dayOfMonth, 1, 28) &&
+             data.frequency in ['monthly', 'weekly', 'yearly'] &&
+             data.active is bool &&
+             data.lastGeneratedMonth is string && data.lastGeneratedMonth.size() <= 7 &&
+             (data.lastGeneratedMonth == '' || isValidMonthStr(data.lastGeneratedMonth)) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidBudget(data, userId) {
+      return data.keys().hasAll(['userId', 'categoryId', 'month', 'limitCents', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'categoryId', 'month', 'limitCents', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             isValidId(data.categoryId) &&
+             isValidMonthStr(data.month) &&
+             isSafeInt(data.limitCents, 1, 100000000000) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidGoal(data, userId) {
+      return data.keys().hasAll(['userId', 'name', 'targetCents', 'currentCents', 'targetDate', 'color', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'name', 'targetCents', 'currentCents', 'targetDate', 'color', 'status', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             isSafeInt(data.targetCents, 1, 100000000000) &&
+             isSafeInt(data.currentCents, 0, 100000000000) &&
+             isValidDateStr(data.targetDate) &&
+             isValidHexColor(data.color) &&
+             data.status in ['active', 'completed'] &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidDebt(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'name', 'creditor', 'totalCents', 'remainingCents',
+               'monthlyPaymentCents', 'interestRatePercent', 'dueDay', 'status',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'name', 'creditor', 'totalCents', 'remainingCents',
+               'monthlyPaymentCents', 'interestRatePercent', 'dueDay', 'status',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.creditor is string && data.creditor.size() >= 1 && data.creditor.size() <= 60 &&
+             isSafeInt(data.totalCents, 1, 100000000000) &&
+             isSafeInt(data.remainingCents, 0, 100000000000) &&
+             isSafeInt(data.monthlyPaymentCents, 0, 100000000000) &&
+             data.interestRatePercent is number && data.interestRatePercent >= 0 && data.interestRatePercent <= 100 &&
+             isSafeInt(data.dueDay, 1, 28) &&
+             data.status in ['active', 'paid'] &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidAsset(data, userId) {
+      return data.keys().hasAll(['userId', 'name', 'category', 'valueCents', 'liquidity', 'notes', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'name', 'category', 'valueCents', 'liquidity', 'notes', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.category in ['fixed_income', 'equities', 'real_estate', 'vehicle', 'reserve', 'other'] &&
+             isSafeInt(data.valueCents, 0, 100000000000) &&
+             data.liquidity in ['high', 'medium', 'low'] &&
+             data.notes is string && data.notes.size() <= 240 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    // --- User Root Document ---
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId) && isOwner(userId) &&
+                       isValidUserSettings(incoming(), userId) &&
+                       incoming().createdAt == request.time &&
+                       incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isOwner(userId) &&
+                       isValidUserSettings(incoming(), userId) &&
+                       isImmutableMeta() && (
+                         incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'updatedAt']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['displayAlias', 'theme', 'updatedAt']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['seededDefaults', 'updatedAt'])
+                       );
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      // --- Accounts ---
+      match /accounts/{accountId} {
+        allow get: if isValidId(userId) && isValidId(accountId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(accountId) && isOwner(userId) &&
+                         isValidAccount(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(accountId) && isOwner(userId) &&
+                         isValidAccount(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'institution', 'type', 'initialBalanceCents', 'color', 'updatedAt']) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly(['archived', 'updatedAt'])
+                         );
+        allow delete: if isValidId(userId) && isValidId(accountId) && isOwner(userId);
+      }
+
+      // --- Categories ---
+      match /categories/{categoryId} {
+        allow get: if isValidId(userId) && isValidId(categoryId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(categoryId) && isOwner(userId) &&
+                         isValidCategory(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(categoryId) && isOwner(userId) &&
+                         isValidCategory(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'color', 'icon', 'updatedAt'])
+                         );
+        allow delete: if isValidId(userId) && isValidId(categoryId) && isOwner(userId);
+      }
+
+      // --- Fictional Credit Cards ---
+      match /cards/{cardId} {
+        allow get: if isValidId(userId) && isValidId(cardId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(cardId) && isOwner(userId) &&
+                         isValidCreditCard(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(cardId) && isOwner(userId) &&
+                         isValidCreditCard(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'brand', 'limitCents', 'closingDay', 'dueDay', 'color', 'updatedAt']) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly(['archived', 'updatedAt'])
+                         );
+        allow delete: if isValidId(userId) && isValidId(cardId) && isOwner(userId);
+      }
+
+      // --- Transactions (Income, Expense, Installments) ---
+      match /transactions/{transactionId} {
+        allow get: if isValidId(userId) && isValidId(transactionId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(transactionId) && isOwner(userId) &&
+                         isValidTransaction(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/categories/$(incoming().categoryId)) &&
+                         (incoming().paymentMethod == 'account'
+                           ? existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(incoming().accountId))
+                           : existsAfter(/databases/$(database)/documents/users/$(userId)/cards/$(incoming().cardId))
+                         );
+        allow update: if isValidId(userId) && isValidId(transactionId) && isOwner(userId) &&
+                         isValidTransaction(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly(['type', 'description', 'amountCents', 'date', 'categoryId', 'paymentMethod', 'accountId', 'cardId', 'invoiceMonth', 'status', 'notes', 'updatedAt'])
+                         ) &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/categories/$(incoming().categoryId)) &&
+                         (incoming().paymentMethod == 'account'
+                           ? existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(incoming().accountId))
+                           : existsAfter(/databases/$(database)/documents/users/$(userId)/cards/$(incoming().cardId))
+                         );
+        allow delete: if isValidId(userId) && isValidId(transactionId) && isOwner(userId);
+      }
+
+      // --- Account Transfers ---
+      match /transfers/{transferId} {
+        allow get: if isValidId(userId) && isValidId(transferId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(transferId) && isOwner(userId) &&
+                         isValidTransfer(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(incoming().fromAccountId)) &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(incoming().toAccountId));
+        allow update: if isValidId(userId) && isValidId(transferId) && isOwner(userId) &&
+                         isValidTransfer(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['fromAccountId', 'toAccountId', 'amountCents', 'date', 'description', 'updatedAt'])
+                         ) &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(incoming().fromAccountId)) &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(incoming().toAccountId));
+        allow delete: if isValidId(userId) && isValidId(transferId) && isOwner(userId);
+      }
+
+      // --- Credit Card Invoice Payments ---
+      match /invoicePayments/{paymentId} {
+        allow get: if isValidId(userId) && isValidId(paymentId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(paymentId) && isOwner(userId) &&
+                         isValidInvoicePayment(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/cards/$(incoming().cardId)) &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(incoming().accountId));
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(paymentId) && isOwner(userId);
+      }
+
+      // --- Recurrences ---
+      match /recurrences/{recurrenceId} {
+        allow get: if isValidId(userId) && isValidId(recurrenceId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(recurrenceId) && isOwner(userId) &&
+                         isValidRecurrence(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/categories/$(incoming().categoryId)) &&
+                         (incoming().paymentMethod == 'account'
+                           ? existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(incoming().accountId))
+                           : existsAfter(/databases/$(database)/documents/users/$(userId)/cards/$(incoming().cardId))
+                         );
+        allow update: if isValidId(userId) && isValidId(recurrenceId) && isOwner(userId) &&
+                         isValidRecurrence(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['active', 'updatedAt']) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly(['lastGeneratedMonth', 'updatedAt']) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly(['type', 'description', 'amountCents', 'categoryId', 'paymentMethod', 'accountId', 'cardId', 'dayOfMonth', 'frequency', 'active', 'updatedAt'])
+                         ) &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/categories/$(incoming().categoryId)) &&
+                         (incoming().paymentMethod == 'account'
+                           ? existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(incoming().accountId))
+                           : existsAfter(/databases/$(database)/documents/users/$(userId)/cards/$(incoming().cardId))
+                         );
+        allow delete: if isValidId(userId) && isValidId(recurrenceId) && isOwner(userId);
+      }
+
+      // --- Monthly Budgets ---
+      match /budgets/{budgetId} {
+        allow get: if isValidId(userId) && isValidId(budgetId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(budgetId) && isOwner(userId) &&
+                         isValidBudget(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/categories/$(incoming().categoryId));
+        allow update: if isValidId(userId) && isValidId(budgetId) && isOwner(userId) &&
+                         isValidBudget(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['limitCents', 'updatedAt']) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly(['categoryId', 'month', 'limitCents', 'updatedAt'])
+                         ) &&
+                         existsAfter(/databases/$(database)/documents/users/$(userId)/categories/$(incoming().categoryId));
+        allow delete: if isValidId(userId) && isValidId(budgetId) && isOwner(userId);
+      }
+
+      // --- Financial Goals ---
+      match /goals/{goalId} {
+        allow get: if isValidId(userId) && isValidId(goalId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(goalId) && isOwner(userId) &&
+                         isValidGoal(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(goalId) && isOwner(userId) &&
+                         isValidGoal(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           (existing().status == 'active' && incoming().diff(existing()).affectedKeys().hasOnly(['currentCents', 'status', 'updatedAt'])) ||
+                           (existing().status == 'active' && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'targetCents', 'targetDate', 'color', 'status', 'updatedAt'])) ||
+                           (existing().status == 'completed' && incoming().status == 'active' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'targetCents', 'updatedAt']))
+                         );
+        allow delete: if isValidId(userId) && isValidId(goalId) && isOwner(userId);
+      }
+
+      // --- Debts ---
+      match /debts/{debtId} {
+        allow get: if isValidId(userId) && isValidId(debtId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(debtId) && isOwner(userId) &&
+                         isValidDebt(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(debtId) && isOwner(userId) &&
+                         isValidDebt(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           (existing().status == 'active' && incoming().diff(existing()).affectedKeys().hasOnly(['remainingCents', 'status', 'updatedAt'])) ||
+                           (existing().status == 'active' && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'creditor', 'totalCents', 'remainingCents', 'monthlyPaymentCents', 'interestRatePercent', 'dueDay', 'status', 'updatedAt'])) ||
+                           (existing().status == 'paid' && incoming().status == 'active' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'remainingCents', 'updatedAt']))
+                         );
+        allow delete: if isValidId(userId) && isValidId(debtId) && isOwner(userId);
+      }
+
+      // --- Net Worth Assets ---
+      match /assets/{assetId} {
+        allow get: if isValidId(userId) && isValidId(assetId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(assetId) && isOwner(userId) &&
+                         isValidAsset(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(assetId) && isOwner(userId) &&
+                         isValidAsset(incoming(), userId) &&
+                         isImmutableMeta() && (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'valueCents', 'liquidity', 'notes', 'updatedAt'])
+                         );
+        allow delete: if isValidId(userId) && isValidId(assetId) && isOwner(userId);
+      }
+    }
+  }
+}

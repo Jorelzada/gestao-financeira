@@ -1,0 +1,6 @@
+{
+  "name": "FinanceFlow",
+  "description": "Plataforma SaaS de controle financeiro pessoal com gestão de contas, faturas, parcelamentos, orçamentos, metas e patrimônio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

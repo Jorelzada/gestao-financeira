@@ -1,0 +1,278 @@
+{
+  "entities": {
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "Non-sensitive user preferences and workspace initialization state.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayAlias": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "theme": { "type": "string", "enum": ["light", "dark"] },
+        "currency": { "type": "string", "enum": ["BRL"] },
+        "seededDefaults": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "displayAlias", "theme", "currency", "seededDefaults", "createdAt", "updatedAt"]
+    },
+    "Account": {
+      "title": "Account",
+      "description": "Financial account without sensitive banking numbers.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "institution": { "type": "string", "minLength": 0, "maxLength": 60 },
+        "type": { "type": "string", "enum": ["checking", "savings", "wallet", "investment"] },
+        "initialBalanceCents": { "type": "integer" },
+        "color": { "type": "string", "minLength": 4, "maxLength": 16, "pattern": "^#[0-9a-fA-F]{6}$" },
+        "archived": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "institution", "type", "initialBalanceCents", "color", "archived", "createdAt", "updatedAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Income or expense classification category.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "color": { "type": "string", "minLength": 4, "maxLength": 16, "pattern": "^#[0-9a-fA-F]{6}$" },
+        "icon": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "type", "color", "icon", "createdAt", "updatedAt"]
+    },
+    "CreditCard": {
+      "title": "CreditCard",
+      "description": "Fictional credit card metadata for invoice and limit tracking (no PAN/CVV/expiry).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "brand": { "type": "string", "minLength": 1, "maxLength": 30 },
+        "limitCents": { "type": "integer" },
+        "closingDay": { "type": "integer" },
+        "dueDay": { "type": "integer" },
+        "color": { "type": "string", "minLength": 4, "maxLength": 16, "pattern": "^#[0-9a-fA-F]{6}$" },
+        "archived": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "brand", "limitCents", "closingDay", "dueDay", "color", "archived", "createdAt", "updatedAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Income or expense entry linked to an account or credit card.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "description": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "amountCents": { "type": "integer" },
+        "date": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "categoryId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "paymentMethod": { "type": "string", "enum": ["account", "card"] },
+        "accountId": { "type": "string", "minLength": 0, "maxLength": 128 },
+        "cardId": { "type": "string", "minLength": 0, "maxLength": 128 },
+        "invoiceMonth": { "type": "string", "minLength": 0, "maxLength": 7 },
+        "status": { "type": "string", "enum": ["paid", "pending"] },
+        "installmentGroupId": { "type": "string", "minLength": 0, "maxLength": 128 },
+        "installmentNumber": { "type": "integer" },
+        "totalInstallments": { "type": "integer" },
+        "recurrenceId": { "type": "string", "minLength": 0, "maxLength": 128 },
+        "notes": { "type": "string", "minLength": 0, "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId", "type", "description", "amountCents", "date", "categoryId",
+        "paymentMethod", "accountId", "cardId", "invoiceMonth", "status",
+        "installmentGroupId", "installmentNumber", "totalInstallments",
+        "recurrenceId", "notes", "createdAt", "updatedAt"
+      ]
+    },
+    "Transfer": {
+      "title": "Transfer",
+      "description": "Balance transfer between two financial accounts (excluded from income/expense totals).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fromAccountId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "toAccountId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "amountCents": { "type": "integer" },
+        "date": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "fromAccountId", "toAccountId", "amountCents", "date", "description", "createdAt", "updatedAt"]
+    },
+    "InvoicePayment": {
+      "title": "InvoicePayment",
+      "description": "Settlement record for a monthly credit card invoice (deducts from account without duplicating expense).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "cardId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "accountId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "invoiceMonth": { "type": "string", "minLength": 7, "maxLength": 7, "pattern": "^\\d{4}-\\d{2}$" },
+        "amountCents": { "type": "integer" },
+        "paidDate": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "cardId", "accountId", "invoiceMonth", "amountCents", "paidDate", "createdAt", "updatedAt"]
+    },
+    "Recurrence": {
+      "title": "Recurrence",
+      "description": "Recurring income or expense template.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "description": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "amountCents": { "type": "integer" },
+        "categoryId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "paymentMethod": { "type": "string", "enum": ["account", "card"] },
+        "accountId": { "type": "string", "minLength": 0, "maxLength": 128 },
+        "cardId": { "type": "string", "minLength": 0, "maxLength": 128 },
+        "dayOfMonth": { "type": "integer" },
+        "frequency": { "type": "string", "enum": ["monthly", "weekly", "yearly"] },
+        "active": { "type": "boolean" },
+        "lastGeneratedMonth": { "type": "string", "minLength": 0, "maxLength": 7 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId", "type", "description", "amountCents", "categoryId",
+        "paymentMethod", "accountId", "cardId", "dayOfMonth", "frequency",
+        "active", "lastGeneratedMonth", "createdAt", "updatedAt"
+      ]
+    },
+    "Budget": {
+      "title": "Budget",
+      "description": "Category spending limit per month.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "categoryId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "month": { "type": "string", "minLength": 7, "maxLength": 7, "pattern": "^\\d{4}-\\d{2}$" },
+        "limitCents": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "categoryId", "month", "limitCents", "createdAt", "updatedAt"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "Financial savings goal with target and current balance in cents.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "targetCents": { "type": "integer" },
+        "currentCents": { "type": "integer" },
+        "targetDate": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "color": { "type": "string", "minLength": 4, "maxLength": 16, "pattern": "^#[0-9a-fA-F]{6}$" },
+        "status": { "type": "string", "enum": ["active", "completed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "targetCents", "currentCents", "targetDate", "color", "status", "createdAt", "updatedAt"]
+    },
+    "Debt": {
+      "title": "Debt",
+      "description": "Liability / debt tracking.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "creditor": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "totalCents": { "type": "integer" },
+        "remainingCents": { "type": "integer" },
+        "monthlyPaymentCents": { "type": "integer" },
+        "interestRatePercent": { "type": "number" },
+        "dueDay": { "type": "integer" },
+        "status": { "type": "string", "enum": ["active", "paid"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId", "name", "creditor", "totalCents", "remainingCents",
+        "monthlyPaymentCents", "interestRatePercent", "dueDay", "status",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "Asset": {
+      "title": "Asset",
+      "description": "Net worth asset item (investments, property, vehicles, reserves).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "category": { "type": "string", "enum": ["fixed_income", "equities", "real_estate", "vehicle", "reserve", "other"] },
+        "valueCents": { "type": "integer" },
+        "liquidity": { "type": "string", "enum": ["high", "medium", "low"] },
+        "notes": { "type": "string", "minLength": 0, "maxLength": 240 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "category", "valueCents", "liquidity", "notes", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserSettings" },
+      "description": "User non-sensitive profile and application preferences."
+    },
+    "/users/{userId}/accounts/{accountId}": {
+      "schema": { "$ref": "#/entities/Account" },
+      "description": "User financial accounts."
+    },
+    "/users/{userId}/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "User income and expense categories."
+    },
+    "/users/{userId}/cards/{cardId}": {
+      "schema": { "$ref": "#/entities/CreditCard" },
+      "description": "User fictional credit cards."
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "User income, expense, and installment transactions."
+    },
+    "/users/{userId}/transfers/{transferId}": {
+      "schema": { "$ref": "#/entities/Transfer" },
+      "description": "Account-to-account transfers."
+    },
+    "/users/{userId}/invoicePayments/{paymentId}": {
+      "schema": { "$ref": "#/entities/InvoicePayment" },
+      "description": "Credit card monthly invoice payment records."
+    },
+    "/users/{userId}/recurrences/{recurrenceId}": {
+      "schema": { "$ref": "#/entities/Recurrence" },
+      "description": "Recurring transaction templates."
+    },
+    "/users/{userId}/budgets/{budgetId}": {
+      "schema": { "$ref": "#/entities/Budget" },
+      "description": "Monthly category budgets."
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": { "$ref": "#/entities/Goal" },
+      "description": "Financial savings goals."
+    },
+    "/users/{userId}/debts/{debtId}": {
+      "schema": { "$ref": "#/entities/Debt" },
+      "description": "User debts and loans."
+    },
+    "/users/{userId}/assets/{assetId}": {
+      "schema": { "$ref": "#/entities/Asset" },
+      "description": "User net worth assets."
+    }
+  }
+}

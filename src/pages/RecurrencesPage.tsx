@@ -1,0 +1,500 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { PauseCircle, Pencil, PlayCircle, Plus, Repeat, Trash2, Zap } from 'lucide-react';
+import { ConfirmDialog, Modal } from '../components/ui/Modal';
+import { useAuth } from '../contexts/AuthContext';
+import { useFinanceData } from '../contexts/FinanceDataContext';
+import {
+  formatCentsToBRL,
+  formatCentsToInput,
+  formatMonthLabel,
+  parseBRLToCents,
+} from '../lib/financeMath';
+import {
+  createRecurrence,
+  deleteRecurrence,
+  generateTransactionFromRecurrence,
+  toggleRecurrenceActive,
+  updateRecurrence,
+} from '../services/firestoreService';
+import type {
+  PaymentMethod,
+  Recurrence,
+  RecurrenceFrequency,
+  TransactionType,
+} from '../types/finance';
+
+export function RecurrencesPage() {
+  const { user } = useAuth();
+  const { activeMonth, recurrences, categories, accounts, cards } = useFinanceData();
+
+  const activeAccounts = accounts.filter((a) => !a.archived);
+  const activeCards = cards.filter((c) => !c.archived);
+
+  const catMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const cardMap = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Recurrence | null>(null);
+  const [deleting, setDeleting] = useState<Recurrence | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const [type, setType] = useState<TransactionType>('expense');
+  const [description, setDescription] = useState('');
+  const [amountText, setAmountText] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('account');
+  const [accountId, setAccountId] = useState('');
+  const [cardId, setCardId] = useState('');
+  const [dayOfMonth, setDayOfMonth] = useState(5);
+  const [frequency, setFrequency] = useState<RecurrenceFrequency>('monthly');
+
+  useEffect(() => {
+    const valid = categories.filter((c) => c.type === type);
+    if (valid.length > 0 && !valid.some((c) => c.id === categoryId)) {
+      setCategoryId(valid[0].id);
+    }
+    if (type === 'income' && paymentMethod === 'card') {
+      setPaymentMethod('account');
+    }
+  }, [type, categories, categoryId, paymentMethod]);
+
+  const openCreate = () => {
+    setEditing(null);
+    setType('expense');
+    setDescription('');
+    setAmountText('');
+    setCategoryId(categories.find((c) => c.type === 'expense')?.id || '');
+    setPaymentMethod('account');
+    setAccountId(activeAccounts[0]?.id || '');
+    setCardId(activeCards[0]?.id || '');
+    setDayOfMonth(5);
+    setFrequency('monthly');
+    setModalOpen(true);
+  };
+
+  const openEdit = (rec: Recurrence) => {
+    setEditing(rec);
+    setType(rec.type);
+    setDescription(rec.description);
+    setAmountText(formatCentsToInput(rec.amountCents));
+    setCategoryId(rec.categoryId);
+    setPaymentMethod(rec.paymentMethod);
+    setAccountId(rec.accountId || activeAccounts[0]?.id || '');
+    setCardId(rec.cardId || activeCards[0]?.id || '');
+    setDayOfMonth(rec.dayOfMonth);
+    setFrequency(rec.frequency);
+    setModalOpen(true);
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !description.trim()) return;
+    const amountCents = parseBRLToCents(amountText);
+    if (amountCents <= 0) return;
+
+    setBusy(true);
+    try {
+      if (editing) {
+        await updateRecurrence(user.uid, editing.id, {
+          type,
+          description: description.trim(),
+          amountCents,
+          categoryId,
+          paymentMethod,
+          accountId: paymentMethod === 'account' ? accountId : '',
+          cardId: paymentMethod === 'card' ? cardId : '',
+          dayOfMonth,
+          frequency,
+          active: editing.active,
+        });
+      } else {
+        await createRecurrence(user.uid, {
+          type,
+          description: description.trim(),
+          amountCents,
+          categoryId,
+          paymentMethod,
+          accountId: paymentMethod === 'account' ? accountId : '',
+          cardId: paymentMethod === 'card' ? cardId : '',
+          dayOfMonth,
+          frequency,
+        });
+      }
+      setModalOpen(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleGenerateOne = async (rec: Recurrence) => {
+    if (!user) return;
+    setBusy(true);
+    try {
+      const closingDay = rec.cardId ? cardMap.get(rec.cardId)?.closingDay : undefined;
+      await generateTransactionFromRecurrence(user.uid, rec, activeMonth, closingDay);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pendingForActiveMonth = recurrences.filter(
+    (r) => r.active && r.lastGeneratedMonth !== activeMonth
+  );
+
+  const handleGenerateAllPending = async () => {
+    if (!user) return;
+    setBusy(true);
+    try {
+      for (const rec of pendingForActiveMonth) {
+        const closingDay = rec.cardId ? cardMap.get(rec.cardId)?.closingDay : undefined;
+        await generateTransactionFromRecurrence(user.uid, rec, activeMonth, closingDay);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!user || !deleting) return;
+    setBusy(true);
+    try {
+      await deleteRecurrence(user.uid, deleting.id);
+      setDeleting(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+            Modelos Recorrentes ({recurrences.length})
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Automatize lançamentos fixos como aluguel, assinaturas, internet ou salário para {formatMonthLabel(activeMonth)}.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {pendingForActiveMonth.length > 0 && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleGenerateAllPending()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-[#16A34A] hover:bg-green-700 text-white whitespace-nowrap"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              Gerar {pendingForActiveMonth.length} Pendente(s) em {activeMonth}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={openCreate}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg bg-[#2563EB] hover:bg-blue-700 text-white whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4" />
+            Nova Recorrência
+          </button>
+        </div>
+      </div>
+
+      {recurrences.length === 0 ? (
+        <div className="p-12 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center space-y-3">
+          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+            Nenhuma recorrência cadastrada.
+          </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Cadastre suas despesas e receitas fixas para lançá-las no mês com um clique.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {recurrences.map((rec) => {
+            const generatedThisMonth = rec.lastGeneratedMonth === activeMonth;
+            return (
+              <div
+                key={rec.id}
+                className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between space-y-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shrink-0">
+                      <Repeat className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                        {rec.description}
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Dia {rec.dayOfMonth} · {catMap.get(rec.categoryId)?.name ?? 'Outros'} ·{' '}
+                        {rec.active ? 'Ativa' : 'Pausada'}
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={`font-mono tabular-nums text-base font-bold whitespace-nowrap ${
+                      rec.type === 'income' ? 'text-[#16A34A]' : 'text-[#DC2626]'
+                    }`}
+                  >
+                    {rec.type === 'income' ? '+' : '-'}
+                    {formatCentsToBRL(rec.amountCents)}
+                  </span>
+                </div>
+
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    disabled={busy || !rec.active || generatedThisMonth}
+                    onClick={() => void handleGenerateOne(rec)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                      generatedThisMonth
+                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 cursor-default'
+                        : 'bg-[#2563EB]/10 text-[#2563EB] hover:bg-[#2563EB]/20 disabled:opacity-50'
+                    }`}
+                  >
+                    {generatedThisMonth
+                      ? `Lançada em ${activeMonth}`
+                      : `Lançar em ${activeMonth}`}
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        user && void toggleRecurrenceActive(user.uid, rec.id, !rec.active)
+                      }
+                      aria-label={rec.active ? 'Pausar recorrência' : 'Ativar recorrência'}
+                      title={rec.active ? 'Pausar' : 'Ativar'}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      {rec.active ? (
+                        <PauseCircle className="w-4 h-4" />
+                      ) : (
+                        <PlayCircle className="w-4 h-4" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openEdit(rec)}
+                      aria-label="Editar recorrência"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-[#2563EB] hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleting(rec)}
+                      aria-label="Excluir recorrência"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-[#DC2626] hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Modal
+        open={modalOpen}
+        title={editing ? 'Editar Recorrência' : 'Nova Recorrência'}
+        onClose={() => setModalOpen(false)}
+      >
+        <form onSubmit={(e) => void handleSave(e)} className="space-y-4">
+          <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setType('expense')}
+              className={`py-2 text-xs font-semibold rounded-md ${
+                type === 'expense'
+                  ? 'bg-white dark:bg-slate-900 text-[#DC2626] shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              Despesa Fixa
+            </button>
+            <button
+              type="button"
+              onClick={() => setType('income')}
+              className={`py-2 text-xs font-semibold rounded-md ${
+                type === 'income'
+                  ? 'bg-white dark:bg-slate-900 text-[#16A34A] shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              Receita Fixa
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+              Descrição
+            </label>
+            <input
+              type="text"
+              required
+              maxLength={120}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Ex.: Aluguel, Internet, Salário..."
+              className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Valor (R$)
+              </label>
+              <input
+                type="text"
+                required
+                inputMode="decimal"
+                value={amountText}
+                onChange={(e) => setAmountText(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono tabular-nums rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Dia (1-28)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={28}
+                required
+                value={dayOfMonth}
+                onChange={(e) =>
+                  setDayOfMonth(Math.max(1, Math.min(28, Number(e.target.value) || 1)))
+                }
+                className="w-full px-3 py-2 text-sm tabular-nums rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Frequência
+              </label>
+              <select
+                value={frequency}
+                onChange={(e) => setFrequency(e.target.value as RecurrenceFrequency)}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              >
+                <option value="monthly">Mensal</option>
+                <option value="weekly">Semanal</option>
+                <option value="yearly">Anual</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Categoria
+              </label>
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              >
+                {categories
+                  .filter((c) => c.type === type)
+                  .map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            {type === 'expense' && (
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Forma de Pagamento
+                </label>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                >
+                  <option value="account">Conta</option>
+                  <option value="card" disabled={activeCards.length === 0}>
+                    Cartão de Crédito
+                  </option>
+                </select>
+              </div>
+            )}
+
+            {paymentMethod === 'account' ? (
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Conta
+                </label>
+                <select
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                >
+                  {activeAccounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Cartão
+                </label>
+                <select
+                  value={cardId}
+                  onChange={(e) => setCardId(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                >
+                  {activeCards.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          <div className="pt-3 flex justify-end gap-3 border-t border-slate-200 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={busy}
+              className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#2563EB] hover:bg-blue-700 text-white"
+            >
+              {busy ? 'Salvando...' : 'Salvar Recorrência'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        title="Excluir Recorrência"
+        description={`Deseja excluir o modelo recorrente "${deleting?.description ?? ''}"? Lançamentos já gerados serão mantidos.`}
+        confirmLabel="Excluir"
+        danger
+        busy={busy}
+        onCancel={() => setDeleting(null)}
+        onConfirm={() => void handleDelete()}
+      />
+    </div>
+  );
+}
