@@ -6,6 +6,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    base: '/gestao-financeira/',
+
     plugins: [
       react(),
       tailwindcss(),
