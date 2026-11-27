@@ -182,13 +182,13 @@ const MODULE_GUIDES: GuideModuleItem[] = [
     steps: [
       'Clique em "Novo Lançamento" (na tela ou no botão azul do topo) e escolha Receita ou Despesa.',
       'Informe descrição, valor em reais, data, categoria e método (Conta Financeira ou Cartão de Crédito para despesas).',
-      'Defina o status (Pago ou Pendente) e salve. Você pode alternar o status diretamente na lista com um clique.',
+      'Defina o status (Recebida/Paga ou Pendente) e salve. No topo de Lançamentos você visualiza Receitas Recebidas separadas de Receitas Pendentes e pode clicar nos cartões para filtrar.',
     ],
     capabilities: [
+      'Separar automaticamente receitas recebidas (já em conta) de receitas pendentes (a receber).',
       'Buscar lançamentos por descrição e filtrar por tipo (Receita/Despesa), categoria e status.',
-      'Marcar lançamentos pendentes como pagos (ou vice-versa) instantaneamente.',
+      'Marcar lançamentos pendentes como pagos/recebidos (ou vice-versa) instantaneamente.',
       'Editar dados de qualquer lançamento ou excluir registros indesejados.',
-      'Visualizar totais filtrados de receitas, despesas e saldo do período.',
     ],
     actionLabel: 'Abrir Lançamentos',
   },
@@ -220,16 +220,17 @@ const MODULE_GUIDES: GuideModuleItem[] = [
     categoryLabel: 'Crédito',
     title: 'Cartões Fictícios',
     summary:
-      'Controle de limites e ciclos de faturamento usando apenas apelido e datas, mantendo sua privacidade total.',
+      'Controle de limites, gastos mensais e parcelamentos ativos usando apenas apelido e datas, mantendo sua privacidade total.',
     icon: CreditCard,
     steps: [
-      'Clique em "Novo Cartão" e preencha apenas um apelido, limite total, dia de fechamento e dia de vencimento.',
-      'Ao lançar uma despesa ou compra parcelada, selecione esse cartão como forma de pagamento.',
-      'Acompanhe na barra de progresso quanto do limite já está comprometido e quanto ainda está disponível.',
+      'Clique em "Novo Cartão" e preencha apelido, os campos sincronizados (Limite Total, Gasto Mensal e Limite Disponível), fechamento e vencimento.',
+      'Em qualquer cartão, clique em "Gastos e Limite do Cartão" para ajustar Limite Total, Gasto Mensal ou Limite Disponível — ao editar um deles, o outro se recalcula automaticamente.',
+      'O sistema identifica sozinho seus parcelamentos ativos no cartão e calcula o Limite Disponível com base em Limite Total − Gasto Mensal − Parcelamento Ativo.',
     ],
     capabilities: [
-      'Cadastrar múltiplos cartões fictícios sem armazenar número de cartão, validade ou CVV.',
-      'Calcular automaticamente limite utilizado, limite disponível e percentual de uso.',
+      'Preencher e sincronizar Limite Total, Gasto Mensal e Limite Disponível em tempo real.',
+      'Identificar automaticamente todos os parcelamentos ativos vinculados a cada cartão.',
+      'Calcular o Limite Disponível descontando tanto o gasto mensal quanto o saldo em aberto dos parcelamentos.',
       'Editar limite/datas de fechamento e vencimento ou remover cartões.',
     ],
     actionLabel: 'Abrir Cartões',
@@ -286,14 +287,14 @@ const MODULE_GUIDES: GuideModuleItem[] = [
       'Modelos para contas e ganhos periódicos (aluguel, salário, assinaturas) com geração rápida para o mês ativo.',
     icon: Repeat,
     steps: [
-      'Clique em "Nova Recorrência" e defina tipo, descrição, valor, categoria, conta ou cartão e frequência (Mensal, Semanal ou Anual).',
-      'No mês desejado, clique em "Gerar Pendentes" para criar de uma vez todas as recorrências que ainda não foram lançadas no período.',
-      'Se cancelar uma assinatura temporariamente, pause a recorrência sem precisar apagá-la.',
+      'Clique em "Nova Recorrência", informe descrição, valor, data de referência, categoria, conta ou cartão e frequência.',
+      'O sistema compara a data informada com o dia de hoje para marcar automaticamente como Paga/Recebida (se já venceu ou é hoje) ou A pagar/A receber (se ainda vai vencer).',
+      'Todas as recorrências adicionadas também são lançadas automaticamente no mês seguinte como pendentes, sem precisar gerar manualmente.',
     ],
     capabilities: [
-      'Cadastrar recorrências mensais, semanais ou anuais com data de início e fim opcional.',
-      'Gerar em lote todas as recorrências pendentes do mês selecionado ou lançar individualmente.',
-      'Pausar, reativar, editar ou excluir modelos recorrentes.',
+      'Detectar automaticamente status pago/pendente pela comparação entre a data da dívida e o dia atual.',
+      'Replicar automaticamente todas as recorrências para o mês seguinte.',
+      'Pausar, reativar, editar ou excluir modelos recorrentes e alternar o status do mês.',
     ],
     actionLabel: 'Abrir Recorrências',
   },
@@ -466,7 +467,7 @@ const GOLDEN_RULES = [
   {
     title: 'Privacidade financeira rigorosa',
     description:
-      'O FinanceFlow nunca solicita CPF, RG, endereço, agência/conta real, número de cartão, validade ou CVV. Use apenas apelidos para identificar contas e cartões.',
+      'O Gestão Financeira nunca solicita CPF, RG, endereço, agência/conta real, número de cartão, validade ou CVV. Use apenas apelidos para identificar contas e cartões.',
   },
 ];
 
@@ -504,7 +505,7 @@ export function GuidePage({ onNavigate, onNewTransaction }: GuidePageProps) {
           <div className="space-y-1.5 max-w-2xl">
             <div className="flex items-center gap-2 text-xs font-semibold text-[#2563EB] dark:text-blue-400">
               <BookOpen className="w-4 h-4 shrink-0" />
-              <span>Central de Aprendizado FinanceFlow</span>
+              <span>Central de Aprendizado Gestão Financeira</span>
             </div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
               Como usar o site passo a passo e tudo que você pode fazer
@@ -676,7 +677,7 @@ export function GuidePage({ onNavigate, onNewTransaction }: GuidePageProps) {
               Guia Módulo por Módulo ({filteredModules.length})
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Passo a passo detalhado e lista completa de ações disponíveis em cada área do FinanceFlow.
+              Passo a passo detalhado e lista completa de ações disponíveis em cada área do Gestão Financeira.
             </p>
           </div>
         </div>
@@ -801,7 +802,7 @@ export function GuidePage({ onNavigate, onNewTransaction }: GuidePageProps) {
               Regras Financeiras e Privacidade do Sistema
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Entenda como o FinanceFlow calcula seus saldos, faturas e protege suas informações.
+              Entenda como o Gestão Financeira calcula seus saldos, faturas e protege suas informações.
             </p>
           </div>
         </div>

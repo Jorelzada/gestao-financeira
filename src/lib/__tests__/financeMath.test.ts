@@ -3,15 +3,19 @@ import {
   addMonthsToDate,
   buildCashflowSeries,
   buildCategoryBreakdown,
+  buildRecurrenceDateStr,
   computeAccountBalanceCents,
   computeCardInvoices,
+  computeCardLimitBreakdown,
   computeCardUsedLimitCents,
   computeInstallmentGroups,
   computeInvoiceMonth,
   computeMonthlySummary,
   computeNetWorth,
   generateTransactionsCSV,
+  getDateForInvoiceMonth,
   parseBRLToCents,
+  resolveRecurrenceTransactionStatus,
   shiftMonth,
   splitInstallmentsInCents,
 } from '../financeMath';
@@ -358,5 +362,241 @@ describe('financeMath — Cent-Exact Financial Rules', () => {
     const csv = generateTransactionsCSV(transactions, categories, [], []);
     expect(csv).toContain('"Aluguel ""Casa"""');
     expect(csv).toContain('"-1200,00"');
+  });
+
+  it('resolves recurrence dates, automatic paid/pending status, invoice target dates, and income separation', () => {
+    // Clamping day 31 across months
+    expect(buildRecurrenceDateStr('2026-02', 31)).toBe('2026-02-28');
+    expect(buildRecurrenceDateStr('2026-11', 31)).toBe('2026-11-30');
+    expect(buildRecurrenceDateStr('2026-12', 5)).toBe('2026-12-05');
+
+    // Automatic paid vs pending comparing against reference today
+    expect(resolveRecurrenceTransactionStatus('2026-11-10', '2026-11-27')).toBe('paid');
+    expect(resolveRecurrenceTransactionStatus('2026-11-27', '2026-11-27')).toBe('paid');
+    expect(resolveRecurrenceTransactionStatus('2026-11-28', '2026-11-27')).toBe('pending');
+    expect(resolveRecurrenceTransactionStatus('2026-12-10', '2026-11-27')).toBe('pending');
+
+    // Date mapping for consolidated card spend
+    const d1 = getDateForInvoiceMonth('2026-11', 10, '2026-11-27');
+    expect(computeInvoiceMonth(d1, 10)).toBe('2026-11');
+    const d2 = getDateForInvoiceMonth('2026-11', 1, '2026-11-27');
+    expect(computeInvoiceMonth(d2, 1)).toBe('2026-11');
+
+    // Income paid vs pending breakdown
+    const txs: Transaction[] = [
+      {
+        id: 'inc1',
+        userId: 'u1',
+        type: 'income',
+        description: 'Salário',
+        amountCents: 300000,
+        date: '2026-11-05',
+        categoryId: 'c1',
+        paymentMethod: 'account',
+        accountId: 'a1',
+        cardId: '',
+        invoiceMonth: '',
+        status: 'paid',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+      {
+        id: 'inc2',
+        userId: 'u1',
+        type: 'income',
+        description: 'Freelance pendente',
+        amountCents: 150000,
+        date: '2026-11-29',
+        categoryId: 'c1',
+        paymentMethod: 'account',
+        accountId: 'a1',
+        cardId: '',
+        invoiceMonth: '',
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+    ];
+    const summary = computeMonthlySummary('2026-11', txs);
+    expect(summary.incomeCents).toBe(450000);
+    expect(summary.paidIncomeCents).toBe(300000);
+    expect(summary.pendingIncomeCents).toBe(150000);
+
+    const catBreakdown = buildCategoryBreakdown('2026-11', 'income', txs, []);
+    expect(catBreakdown[0].paidAmountCents).toBe(300000);
+    expect(catBreakdown[0].pendingAmountCents).toBe(150000);
+  });
+
+  it('computes card limit breakdown separating monthly spend, active installments, and available limit without double-counting', () => {
+    const card: CreditCard = {
+      id: 'card_1',
+      userId: 'u1',
+      name: 'Nubank',
+      brand: 'Mastercard',
+      limitCents: 300000, // R$ 3.000,00
+      closingDay: 10,
+      dueDay: 17,
+      color: '#7C3AED',
+      archived: false,
+    };
+
+    const txs: Transaction[] = [
+      // Itemized monthly purchase (non-installment) in 2026-11
+      {
+        id: 'tx_1',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Mercado',
+        amountCents: 20000,
+        date: '2026-11-03',
+        categoryId: 'c1',
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: 'card_1',
+        invoiceMonth: '2026-11',
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+      // Consolidated monthly spend in 2026-11
+      {
+        id: 'tx_2',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Gasto Total — Nubank',
+        amountCents: 30000,
+        date: '2026-11-05',
+        categoryId: 'c1',
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: 'card_1',
+        invoiceMonth: '2026-11',
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '[Gasto Total] Gasto consolidado do cartão',
+      },
+      // Active installment group across 2026-10 (paid), 2026-11 (unpaid), 2026-12 (unpaid), 2027-01 (unpaid)
+      {
+        id: 'tx_i0',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Notebook (1/4)',
+        amountCents: 40000,
+        date: '2026-10-05',
+        categoryId: 'c1',
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: 'card_1',
+        invoiceMonth: '2026-10',
+        status: 'paid',
+        installmentGroupId: 'inst_nb',
+        installmentNumber: 1,
+        totalInstallments: 4,
+        recurrenceId: '',
+        notes: '',
+      },
+      {
+        id: 'tx_i1',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Notebook (2/4)',
+        amountCents: 40000,
+        date: '2026-11-05',
+        categoryId: 'c1',
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: 'card_1',
+        invoiceMonth: '2026-11',
+        status: 'pending',
+        installmentGroupId: 'inst_nb',
+        installmentNumber: 2,
+        totalInstallments: 4,
+        recurrenceId: '',
+        notes: '',
+      },
+      {
+        id: 'tx_i2',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Notebook (3/4)',
+        amountCents: 40000,
+        date: '2026-12-05',
+        categoryId: 'c1',
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: 'card_1',
+        invoiceMonth: '2026-12',
+        status: 'pending',
+        installmentGroupId: 'inst_nb',
+        installmentNumber: 3,
+        totalInstallments: 4,
+        recurrenceId: '',
+        notes: '',
+      },
+      {
+        id: 'tx_i3',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Notebook (4/4)',
+        amountCents: 40000,
+        date: '2027-01-05',
+        categoryId: 'c1',
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: 'card_1',
+        invoiceMonth: '2027-01',
+        status: 'pending',
+        installmentGroupId: 'inst_nb',
+        installmentNumber: 4,
+        totalInstallments: 4,
+        recurrenceId: '',
+        notes: '',
+      },
+    ];
+
+    const invoicePayments: InvoicePayment[] = [
+      {
+        id: 'card_1__2026-10',
+        userId: 'u1',
+        cardId: 'card_1',
+        accountId: 'acc_1',
+        invoiceMonth: '2026-10',
+        amountCents: 40000,
+        paidDate: '2026-10-17',
+      },
+    ];
+
+    const invoices = computeCardInvoices([card], txs, invoicePayments, '2026-11-06');
+    const breakdown = computeCardLimitBreakdown(card, '2026-11', txs, invoices);
+
+    expect(breakdown.limitCents).toBe(300000);
+    expect(breakdown.itemizedMonthlySpendCents).toBe(20000);
+    expect(breakdown.consolidatedMonthlySpendCents).toBe(30000);
+    expect(breakdown.consolidatedMonthlyTxId).toBe('tx_2');
+    // Monthly non-installment spend = 20000 + 30000 = 50000
+    expect(breakdown.monthlySpendCents).toBe(50000);
+    // Active unpaid installments = 3 x 40000 = 120000 (excludes 2026-10 paid)
+    expect(breakdown.activeInstallmentsCents).toBe(120000);
+    expect(breakdown.targetMonthInstallmentsCents).toBe(40000);
+    expect(breakdown.targetMonthTotalInvoiceCents).toBe(90000);
+    expect(breakdown.activeInstallmentGroups).toHaveLength(1);
+    expect(breakdown.activeInstallmentGroups[0].description).toBe('Notebook');
+    expect(breakdown.activeInstallmentGroups[0].paidCount).toBe(1);
+    expect(breakdown.activeInstallmentGroups[0].remainingCents).toBe(120000);
+    // Available = 300000 - 50000 - 120000 = 130000
+    expect(breakdown.availableLimitCents).toBe(130000);
+    expect(breakdown.totalCommittedCents).toBe(computeCardUsedLimitCents('card_1', invoices));
   });
 });

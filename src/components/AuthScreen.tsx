@@ -68,7 +68,7 @@ export function AuthScreen() {
               <Wallet className="w-4 h-4" />
             </div>
             <span className="text-lg font-bold tracking-tight whitespace-nowrap">
-              FinanceFlow
+              Gestão Financeira
             </span>
           </div>
           <span className="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline whitespace-nowrap">

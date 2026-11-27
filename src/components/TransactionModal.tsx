@@ -348,9 +348,11 @@ export function TransactionModal({
                 className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               >
                 <option value="paid">
-                  {type === 'income' ? 'Recebido' : 'Pago'}
+                  {type === 'income' ? 'Recebida (já entrou na conta)' : 'Paga'}
                 </option>
-                <option value="pending">Pendente</option>
+                <option value="pending">
+                  {type === 'income' ? 'Pendente (a receber)' : 'Pendente (a pagar)'}
+                </option>
               </select>
             </div>
           )}

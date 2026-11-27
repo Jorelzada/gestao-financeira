@@ -138,9 +138,14 @@ export function DashboardPage({
           <p className="mt-2 text-2xl font-bold font-mono tabular-nums text-[#16A34A]">
             {formatCentsToBRL(summary.incomeCents)}
           </p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-            Recebido: {formatCentsToBRL(summary.paidIncomeCents)}
-          </p>
+          <div className="mt-1.5 flex items-center justify-between gap-2 text-xs tabular-nums">
+            <span className="text-[#16A34A] font-medium">
+              Recebida: {formatCentsToBRL(summary.paidIncomeCents)}
+            </span>
+            <span className="text-amber-600 dark:text-amber-400 font-medium">
+              Pendente: {formatCentsToBRL(summary.pendingIncomeCents)}
+            </span>
+          </div>
         </div>
 
         <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
@@ -151,9 +156,14 @@ export function DashboardPage({
           <p className="mt-2 text-2xl font-bold font-mono tabular-nums text-[#DC2626]">
             {formatCentsToBRL(summary.expenseCents)}
           </p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-            Resultado: {formatCentsToBRL(summary.netCents)}
-          </p>
+          <div className="mt-1.5 flex items-center justify-between gap-2 text-xs tabular-nums">
+            <span className="text-slate-500 dark:text-slate-400">
+              Pagas: {formatCentsToBRL(summary.paidExpenseCents)}
+            </span>
+            <span className="text-slate-500 dark:text-slate-400">
+              Resultado: {formatCentsToBRL(summary.netCents)}
+            </span>
+          </div>
         </div>
 
         <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
@@ -338,22 +348,40 @@ export function DashboardPage({
                     <th className="pb-2.5 font-medium">Data</th>
                     <th className="pb-2.5 font-medium">Descrição</th>
                     <th className="pb-2.5 font-medium">Categoria</th>
+                    <th className="pb-2.5 font-medium">Status</th>
                     <th className="pb-2.5 font-medium text-right">Valor</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                   {monthTransactions.map((tx) => {
                     const cat = catMap.get(tx.categoryId);
+                    const statusLabel =
+                      tx.status === 'paid'
+                        ? tx.type === 'income'
+                          ? 'Recebida'
+                          : 'Paga'
+                        : tx.type === 'income'
+                          ? 'A receber'
+                          : 'A pagar';
                     return (
                       <tr key={tx.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                         <td className="py-2.5 pr-3 text-xs text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
                           {formatDateBR(tx.date)}
                         </td>
-                        <td className="py-2.5 pr-3 font-medium text-slate-900 dark:text-slate-100 truncate max-w-[200px]">
+                        <td className="py-2.5 pr-3 font-medium text-slate-900 dark:text-slate-100 truncate max-w-[180px]">
                           {tx.description}
                         </td>
                         <td className="py-2.5 pr-3 text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
                           {cat?.name ?? 'Outros'}
+                        </td>
+                        <td
+                          className={`py-2.5 pr-3 text-xs font-medium whitespace-nowrap ${
+                            tx.status === 'paid'
+                              ? 'text-[#16A34A]'
+                              : 'text-amber-600 dark:text-amber-400'
+                          }`}
+                        >
+                          {statusLabel}
                         </td>
                         <td
                           className={`py-2.5 text-right font-mono tabular-nums font-medium whitespace-nowrap ${

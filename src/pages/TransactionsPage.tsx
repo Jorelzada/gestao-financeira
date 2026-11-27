@@ -96,26 +96,87 @@ export function TransactionsPage() {
   return (
     <div className="space-y-6">
       {/* Period KPI Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <button
+          type="button"
+          onClick={() => {
+            setTypeFilter('income');
+            setStatusFilter('paid');
+          }}
+          className={`p-4 rounded-xl bg-white dark:bg-slate-900 border text-left transition-colors ${
+            typeFilter === 'income' && statusFilter === 'paid'
+              ? 'border-[#16A34A] ring-1 ring-[#16A34A]'
+              : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+          }`}
+        >
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Receitas ({formatMonthLabel(activeMonth)})
+            Receitas Recebidas ({formatMonthLabel(activeMonth)})
           </p>
           <p className="mt-1 text-xl font-bold font-mono tabular-nums text-[#16A34A]">
-            {formatCentsToBRL(monthSummary.incomeCents)}
+            {formatCentsToBRL(monthSummary.paidIncomeCents)}
           </p>
-        </div>
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+            Confirmadas no saldo · clique para filtrar
+          </p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setTypeFilter('income');
+            setStatusFilter('pending');
+          }}
+          className={`p-4 rounded-xl bg-white dark:bg-slate-900 border text-left transition-colors ${
+            typeFilter === 'income' && statusFilter === 'pending'
+              ? 'border-amber-500 ring-1 ring-amber-500'
+              : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+          }`}
+        >
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Receitas Pendentes ({formatMonthLabel(activeMonth)})
+          </p>
+          <p className="mt-1 text-xl font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
+            {formatCentsToBRL(monthSummary.pendingIncomeCents)}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+            A receber · Previsto total: {formatCentsToBRL(monthSummary.incomeCents)}
+          </p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setTypeFilter('expense');
+            setStatusFilter('all');
+          }}
+          className={`p-4 rounded-xl bg-white dark:bg-slate-900 border text-left transition-colors ${
+            typeFilter === 'expense' && statusFilter === 'all'
+              ? 'border-[#DC2626] ring-1 ring-[#DC2626]'
+              : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+          }`}
+        >
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Despesas ({formatMonthLabel(activeMonth)})
           </p>
           <p className="mt-1 text-xl font-bold font-mono tabular-nums text-[#DC2626]">
             {formatCentsToBRL(monthSummary.expenseCents)}
           </p>
-        </div>
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+            Pagas: {formatCentsToBRL(monthSummary.paidExpenseCents)} · A pagar:{' '}
+            {formatCentsToBRL(monthSummary.pendingExpenseCents)}
+          </p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setTypeFilter('all');
+            setStatusFilter('all');
+          }}
+          className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-left transition-colors"
+        >
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Resultado do Mês
+            Resultado Previsto do Mês
           </p>
           <p
             className={`mt-1 text-xl font-bold font-mono tabular-nums ${
@@ -126,7 +187,11 @@ export function TransactionsPage() {
           >
             {formatCentsToBRL(monthSummary.netCents)}
           </p>
-        </div>
+          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+            Realizado (recebido - pago):{' '}
+            {formatCentsToBRL(monthSummary.paidIncomeCents - monthSummary.paidExpenseCents)}
+          </p>
+        </button>
       </div>
 
       {/* Filters & Action Bar */}
@@ -166,8 +231,8 @@ export function TransactionsPage() {
             className="px-3 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
           >
             <option value="all">Todos os status</option>
-            <option value="paid">Pago / Recebido</option>
-            <option value="pending">Pendente</option>
+            <option value="paid">Recebida / Paga</option>
+            <option value="pending">Pendente (A receber / A pagar)</option>
           </select>
 
           <select
@@ -291,12 +356,12 @@ export function TransactionsPage() {
                           {tx.status === 'paid' ? (
                             <>
                               <CheckCircle2 className="w-3.5 h-3.5" />
-                              {tx.type === 'income' ? 'Recebido' : 'Pago'}
+                              {tx.type === 'income' ? 'Recebida' : 'Paga'}
                             </>
                           ) : (
                             <>
                               <Clock className="w-3.5 h-3.5" />
-                              Pendente
+                              {tx.type === 'income' ? 'A receber' : 'A pagar'}
                             </>
                           )}
                         </button>

@@ -172,7 +172,7 @@ export function SettingsPage() {
         </div>
         <ul className="text-xs text-slate-600 dark:text-slate-300 space-y-1.5 list-disc pl-5 leading-relaxed">
           <li>
-            O FinanceFlow não coleta CPF, RG, endereço, número real de cartão, validade, CVV ou senhas bancárias.
+            O Gestão Financeira não coleta CPF, RG, endereço, número real de cartão, validade, CVV ou senhas bancárias.
           </li>
           <li>
             Todos os registros financeiros são isolados por usuário autenticado (`users/{'{uid}'}`) e protegidos por regras rigorosas no Cloud Firestore.

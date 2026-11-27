@@ -13,8 +13,14 @@ import {
 } from 'firebase/firestore';
 import {
   addMonthsToDate,
+  buildRecurrenceDateStr,
   computeInvoiceMonth,
+  getCurrentMonthKey,
+  getDateForInvoiceMonth,
+  getTodayDateStr,
   MAX_SAFE_CENTS,
+  resolveRecurrenceTransactionStatus,
+  shiftMonth,
   splitInstallmentsInCents,
 } from '../lib/financeMath';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -23,12 +29,14 @@ import type {
   AssetCategory,
   AssetLiquidity,
   CardInvoiceSummary,
+  CreditCard,
   Debt,
   Goal,
   PaymentMethod,
   Recurrence,
   RecurrenceFrequency,
   ThemeMode,
+  Transaction,
   TransactionStatus,
   TransactionType,
 } from '../types/finance';
@@ -381,6 +389,119 @@ export async function deleteCard(userId: string, cardId: string): Promise<void> 
   }
 }
 
+export async function recordCardTotalSpend(
+  userId: string,
+  input: {
+    card: CreditCard;
+    invoiceMonth: string;
+    categoryId: string;
+    description: string;
+    amountCents: number;
+    mode: 'set_total' | 'add';
+    existingConsolidatedTxId?: string | null;
+    itemizedTotalCents?: number;
+  }
+): Promise<void> {
+  const purchaseDate = getDateForInvoiceMonth(input.invoiceMonth, input.card.closingDay);
+  const resolvedInvoiceMonth = computeInvoiceMonth(purchaseDate, input.card.closingDay);
+  const safeDesc = clampStr(input.description || `Gasto Total — ${input.card.name}`, 120);
+
+  if (input.mode === 'add') {
+    const id = newId('tx');
+    const path = `users/${userId}/transactions/${id}`;
+    try {
+      await setDoc(doc(db, 'users', userId, 'transactions', id), {
+        userId,
+        type: 'expense',
+        description: safeDesc,
+        amountCents: clampInt(input.amountCents, 1, MAX_SAFE_CENTS),
+        date: purchaseDate,
+        categoryId: input.categoryId,
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: input.card.id,
+        invoiceMonth: resolvedInvoiceMonth,
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '[Gasto Avulso] Registro no cartão',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, path);
+    }
+    return;
+  }
+
+  const desiredTotal = clampInt(input.amountCents, 0, MAX_SAFE_CENTS);
+  const targetDelta = Math.max(0, desiredTotal - (input.itemizedTotalCents ?? 0));
+
+  if (targetDelta <= 0) {
+    if (input.existingConsolidatedTxId) {
+      const delPath = `users/${userId}/transactions/${input.existingConsolidatedTxId}`;
+      try {
+        await deleteDoc(doc(db, 'users', userId, 'transactions', input.existingConsolidatedTxId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, delPath);
+      }
+    }
+    return;
+  }
+
+  if (input.existingConsolidatedTxId) {
+    const updPath = `users/${userId}/transactions/${input.existingConsolidatedTxId}`;
+    try {
+      await updateDoc(doc(db, 'users', userId, 'transactions', input.existingConsolidatedTxId), {
+        type: 'expense',
+        description: safeDesc,
+        amountCents: targetDelta,
+        date: purchaseDate,
+        categoryId: input.categoryId,
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: input.card.id,
+        invoiceMonth: resolvedInvoiceMonth,
+        status: 'pending',
+        notes: '[Gasto Total] Gasto consolidado do cartão',
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, updPath);
+    }
+    return;
+  }
+
+  const id = newId('tx');
+  const createPath = `users/${userId}/transactions/${id}`;
+  try {
+    await setDoc(doc(db, 'users', userId, 'transactions', id), {
+      userId,
+      type: 'expense',
+      description: safeDesc,
+      amountCents: targetDelta,
+      date: purchaseDate,
+      categoryId: input.categoryId,
+      paymentMethod: 'card',
+      accountId: '',
+      cardId: input.card.id,
+      invoiceMonth: resolvedInvoiceMonth,
+      status: 'pending',
+      installmentGroupId: '',
+      installmentNumber: 1,
+      totalInstallments: 1,
+      recurrenceId: '',
+      notes: '[Gasto Total] Gasto consolidado do cartão',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, createPath);
+  }
+}
+
 // --- Transactions & Installments ---
 export async function createTransactionOrInstallments(
   userId: string,
@@ -672,30 +793,87 @@ export async function createRecurrence(
     paymentMethod: PaymentMethod;
     accountId: string;
     cardId: string;
-    dayOfMonth: number;
+    cardClosingDay?: number;
+    startDate: string; // YYYY-MM-DD
     frequency: RecurrenceFrequency;
   }
 ): Promise<string> {
   const id = newId('rec');
   const path = `users/${userId}/recurrences/${id}`;
   const isCard = input.paymentMethod === 'card' && input.type === 'expense';
+  const safeDate = /^\d{4}-\d{2}-\d{2}$/.test(input.startDate)
+    ? input.startDate
+    : getTodayDateStr();
+  const dayOfMonth = clampInt(Number.parseInt(safeDate.slice(8, 10), 10) || 1, 1, 31);
+  const baseMonth = safeDate.slice(0, 7);
+  const nextFromBase = shiftMonth(baseMonth, 1);
+  const today = getTodayDateStr();
+  const nextFromToday = shiftMonth(getCurrentMonthKey(), 1);
+  const finalTargetMonth = nextFromBase >= nextFromToday ? nextFromBase : nextFromToday;
+
+  const monthsToCreate: string[] = [baseMonth];
+  let cursor = baseMonth;
+  let guard = 0;
+  while (cursor < finalTargetMonth && guard < 12) {
+    cursor = shiftMonth(cursor, 1);
+    monthsToCreate.push(cursor);
+    guard += 1;
+  }
+
+  const lastGeneratedMonth = monthsToCreate[monthsToCreate.length - 1];
+  const safeDescription = clampStr(input.description, 120);
+  const safeAmountCents = clampInt(input.amountCents, 1, MAX_SAFE_CENTS);
+
   try {
-    await setDoc(doc(db, 'users', userId, 'recurrences', id), {
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'users', userId, 'recurrences', id), {
       userId,
       type: input.type,
-      description: clampStr(input.description, 120),
-      amountCents: clampInt(input.amountCents, 1, MAX_SAFE_CENTS),
+      description: safeDescription,
+      amountCents: safeAmountCents,
       categoryId: input.categoryId,
       paymentMethod: isCard ? 'card' : 'account',
       accountId: isCard ? '' : input.accountId,
       cardId: isCard ? input.cardId : '',
-      dayOfMonth: clampInt(input.dayOfMonth, 1, 28),
+      dayOfMonth,
       frequency: input.frequency,
       active: true,
-      lastGeneratedMonth: '',
+      lastGeneratedMonth,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+
+    for (const monthKey of monthsToCreate) {
+      const txDate =
+        monthKey === baseMonth ? safeDate : buildRecurrenceDateStr(monthKey, dayOfMonth);
+      const status = resolveRecurrenceTransactionStatus(txDate, today);
+      const invoiceMonth = isCard
+        ? computeInvoiceMonth(txDate, input.cardClosingDay ?? 10)
+        : '';
+      const txId = newId('tx');
+      batch.set(doc(db, 'users', userId, 'transactions', txId), {
+        userId,
+        type: input.type,
+        description: safeDescription,
+        amountCents: safeAmountCents,
+        date: txDate,
+        categoryId: input.categoryId,
+        paymentMethod: isCard ? 'card' : 'account',
+        accountId: isCard ? '' : input.accountId,
+        cardId: isCard ? input.cardId : '',
+        invoiceMonth,
+        status,
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: id,
+        notes: 'Gerado automaticamente por recorrência',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, path);
@@ -729,7 +907,7 @@ export async function updateRecurrence(
       paymentMethod: isCard ? 'card' : 'account',
       accountId: isCard ? '' : input.accountId,
       cardId: isCard ? input.cardId : '',
-      dayOfMonth: clampInt(input.dayOfMonth, 1, 28),
+      dayOfMonth: clampInt(input.dayOfMonth, 1, 31),
       frequency: input.frequency,
       active: input.active,
       updatedAt: serverTimestamp(),
@@ -762,8 +940,8 @@ export async function generateTransactionFromRecurrence(
   cardClosingDay?: number
 ): Promise<void> {
   const path = `users/${userId}/recurrences/${recurrence.id}`;
-  const day = String(clampInt(recurrence.dayOfMonth, 1, 28)).padStart(2, '0');
-  const dateStr = `${targetMonth}-${day}`;
+  const dateStr = buildRecurrenceDateStr(targetMonth, recurrence.dayOfMonth);
+  const status = resolveRecurrenceTransactionStatus(dateStr);
   const isCard = recurrence.paymentMethod === 'card' && recurrence.type === 'expense';
   const invoiceMonth = isCard ? computeInvoiceMonth(dateStr, cardClosingDay ?? 10) : '';
 
@@ -781,7 +959,7 @@ export async function generateTransactionFromRecurrence(
       accountId: isCard ? '' : recurrence.accountId,
       cardId: isCard ? recurrence.cardId : '',
       invoiceMonth,
-      status: 'pending',
+      status,
       installmentGroupId: '',
       installmentNumber: 1,
       totalInstallments: 1,
@@ -791,14 +969,104 @@ export async function generateTransactionFromRecurrence(
       updatedAt: serverTimestamp(),
     });
 
-    batch.update(doc(db, 'users', userId, 'recurrences', recurrence.id), {
-      lastGeneratedMonth: targetMonth,
-      updatedAt: serverTimestamp(),
-    });
+    if (!recurrence.lastGeneratedMonth || targetMonth > recurrence.lastGeneratedMonth) {
+      batch.update(doc(db, 'users', userId, 'recurrences', recurrence.id), {
+        lastGeneratedMonth: targetMonth,
+        updatedAt: serverTimestamp(),
+      });
+    }
 
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function syncRecurrencesThroughNextMonth(
+  userId: string,
+  recurrences: Recurrence[],
+  transactions: Transaction[],
+  cards: CreditCard[]
+): Promise<number> {
+  const today = getTodayDateStr();
+  const currentMonth = getCurrentMonthKey();
+  const nextMonth = shiftMonth(currentMonth, 1);
+  const targetMonths = [currentMonth, nextMonth];
+  const cardMap = new Map(cards.map((c) => [c.id, c]));
+
+  const batch = writeBatch(db);
+  let createdCount = 0;
+
+  for (const rec of recurrences) {
+    if (!rec.active) continue;
+    let highestMonth = rec.lastGeneratedMonth;
+    let updatedRec = false;
+
+    for (const monthKey of targetMonths) {
+      if (rec.lastGeneratedMonth && rec.lastGeneratedMonth >= monthKey) {
+        continue;
+      }
+      const alreadyExists = transactions.some(
+        (tx) => tx.recurrenceId === rec.id && tx.date.slice(0, 7) === monthKey
+      );
+      if (alreadyExists) {
+        if (!highestMonth || monthKey > highestMonth) {
+          highestMonth = monthKey;
+          updatedRec = true;
+        }
+        continue;
+      }
+
+      const txDate = buildRecurrenceDateStr(monthKey, rec.dayOfMonth);
+      const status = resolveRecurrenceTransactionStatus(txDate, today);
+      const isCard = rec.paymentMethod === 'card' && rec.type === 'expense';
+      const closingDay = rec.cardId ? (cardMap.get(rec.cardId)?.closingDay ?? 10) : 10;
+      const invoiceMonth = isCard ? computeInvoiceMonth(txDate, closingDay) : '';
+
+      const txId = newId('tx');
+      batch.set(doc(db, 'users', userId, 'transactions', txId), {
+        userId,
+        type: rec.type,
+        description: rec.description,
+        amountCents: rec.amountCents,
+        date: txDate,
+        categoryId: rec.categoryId,
+        paymentMethod: isCard ? 'card' : 'account',
+        accountId: isCard ? '' : rec.accountId,
+        cardId: isCard ? rec.cardId : '',
+        invoiceMonth,
+        status,
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: rec.id,
+        notes: 'Gerado automaticamente por recorrência',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      createdCount += 1;
+      if (!highestMonth || monthKey > highestMonth) {
+        highestMonth = monthKey;
+        updatedRec = true;
+      }
+    }
+
+    if (updatedRec && highestMonth) {
+      batch.update(doc(db, 'users', userId, 'recurrences', rec.id), {
+        lastGeneratedMonth: highestMonth,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  }
+
+  if (createdCount === 0) return 0;
+
+  try {
+    await batch.commit();
+    return createdCount;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `users/${userId}/recurrences`);
   }
 }
 

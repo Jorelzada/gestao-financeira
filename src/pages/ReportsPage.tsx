@@ -85,7 +85,7 @@ export function ReportsPage() {
 
   const handleExportCSV = () => {
     const csv = generateTransactionsCSV(transactions, categories, accounts, cards);
-    triggerDownload(`financeflow-lancamentos-${activeMonth}.csv`, csv, 'text/csv;charset=utf-8;');
+    triggerDownload(`gestao-financeira-lancamentos-${activeMonth}.csv`, csv, 'text/csv;charset=utf-8;');
   };
 
   const handleExportJSON = () => {
@@ -105,7 +105,7 @@ export function ReportsPage() {
       assets,
     };
     triggerDownload(
-      `financeflow-backup-${activeMonth}.json`,
+      `gestao-financeira-backup-${activeMonth}.json`,
       JSON.stringify(payload, null, 2),
       'application/json;charset=utf-8;'
     );
@@ -145,32 +145,36 @@ export function ReportsPage() {
       </div>
 
       {/* Summary KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
         <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Taxa de Poupança ({formatMonthLabel(activeMonth)})
+            Receitas Recebidas ({formatMonthLabel(activeMonth)})
           </p>
-          <p className="mt-1 text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
-            {summary.savingsRatePercent}%
+          <p className="mt-1 text-xl font-bold font-mono tabular-nums text-[#16A34A]">
+            {formatCentsToBRL(summary.paidIncomeCents)}
           </p>
         </div>
         <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Resultado Líquido do Mês
+            Receitas Pendentes (A receber)
           </p>
-          <p
-            className={`mt-1 text-2xl font-bold font-mono tabular-nums ${
-              summary.netCents >= 0 ? 'text-[#16A34A]' : 'text-[#DC2626]'
-            }`}
-          >
-            {formatCentsToBRL(summary.netCents)}
+          <p className="mt-1 text-xl font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
+            {formatCentsToBRL(summary.pendingIncomeCents)}
+          </p>
+        </div>
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Taxa de Poupança ({formatMonthLabel(activeMonth)})
+          </p>
+          <p className="mt-1 text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+            {summary.savingsRatePercent}%
           </p>
         </div>
         <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Despesas em Conta / Débito
           </p>
-          <p className="mt-1 text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+          <p className="mt-1 text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
             {formatCentsToBRL(accountExpenseCents)}
           </p>
         </div>
@@ -178,7 +182,7 @@ export function ReportsPage() {
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Despesas no Cartão de Crédito
           </p>
-          <p className="mt-1 text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+          <p className="mt-1 text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
             {formatCentsToBRL(cardExpenseCents)}
           </p>
         </div>
@@ -314,16 +318,22 @@ export function ReportsPage() {
               {incomeCategories.map((item) => (
                 <div
                   key={item.categoryId}
-                  className="py-2.5 flex items-center justify-between text-sm"
+                  className="py-2.5 flex items-center justify-between gap-2 text-sm"
                 >
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      className="w-2.5 h-2.5 rounded-sm"
-                      style={{ backgroundColor: item.color }}
-                    />
-                    <span className="text-slate-800 dark:text-slate-200">{item.name}</span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className="w-2.5 h-2.5 rounded-sm shrink-0"
+                        style={{ backgroundColor: item.color }}
+                      />
+                      <span className="text-slate-800 dark:text-slate-200 truncate">{item.name}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 pl-5 tabular-nums">
+                      Recebida: {formatCentsToBRL(item.paidAmountCents)} · Pendente:{' '}
+                      {formatCentsToBRL(item.pendingAmountCents)}
+                    </p>
                   </div>
-                  <span className="font-mono tabular-nums text-xs font-semibold text-[#16A34A]">
+                  <span className="font-mono tabular-nums text-xs font-semibold text-[#16A34A] shrink-0">
                     {item.percentage}% · {formatCentsToBRL(item.amountCents)}
                   </span>
                 </div>

@@ -8,6 +8,7 @@ import type {
   InstallmentGroupSummary,
   InvoicePayment,
   Transaction,
+  TransactionStatus,
   Transfer,
 } from '../types/finance';
 
@@ -132,6 +133,47 @@ export function computeInvoiceMonth(purchaseDate: string, closingDay: number): s
     return shiftMonth(monthKey, 1);
   }
   return monthKey;
+}
+
+/**
+ * Returns a purchase date (YYYY-MM-DD) whose credit card invoice falls in targetInvoiceMonth.
+ */
+export function getDateForInvoiceMonth(
+  targetInvoiceMonth: string,
+  closingDay: number,
+  referenceDate: string = getTodayDateStr()
+): string {
+  if (computeInvoiceMonth(referenceDate, closingDay) === targetInvoiceMonth) {
+    return referenceDate;
+  }
+  if (closingDay > 1) {
+    return `${targetInvoiceMonth}-01`;
+  }
+  const prevMonth = shiftMonth(targetInvoiceMonth, -1);
+  return `${prevMonth}-15`;
+}
+
+/**
+ * Builds a valid YYYY-MM-DD date inside targetMonth, clamping dayOfMonth (1..31) to month length.
+ */
+export function buildRecurrenceDateStr(targetMonth: string, dayOfMonth: number): string {
+  const [yStr, mStr] = targetMonth.split('-');
+  const year = Number.parseInt(yStr, 10);
+  const monthIndex = Number.parseInt(mStr, 10) - 1;
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+  const clampedDay = Math.max(1, Math.min(lastDay, Math.round(dayOfMonth)));
+  return `${targetMonth}-${String(clampedDay).padStart(2, '0')}`;
+}
+
+/**
+ * Resolves automatic paid/pending status by comparing the scheduled date against today.
+ * Dates on or before today are automatically marked as paid/received; future dates stay pending.
+ */
+export function resolveRecurrenceTransactionStatus(
+  txDate: string,
+  today: string = getTodayDateStr()
+): TransactionStatus {
+  return txDate <= today ? 'paid' : 'pending';
 }
 
 /**
@@ -324,6 +366,122 @@ export function computeCardUsedLimitCents(
   return used;
 }
 
+export interface CardLimitBreakdown {
+  limitCents: number;
+  monthlySpendCents: number; // Unpaid non-installment spend in targetMonth
+  itemizedMonthlySpendCents: number; // Unpaid non-installment itemized spend in targetMonth
+  consolidatedMonthlySpendCents: number; // Unpaid [Gasto Total] consolidated tx in targetMonth
+  consolidatedMonthlyTxId: string | null;
+  targetMonthInstallmentsCents: number; // Installment portion due in targetMonth
+  targetMonthTotalInvoiceCents: number; // Total invoice in targetMonth (monthlySpend + month installments)
+  activeInstallmentsCents: number; // Total unpaid installment balance across all months
+  activeInstallmentGroups: InstallmentGroupSummary[];
+  otherMonthsNonInstallmentCents: number; // Unpaid non-installment spend in other months
+  totalCommittedCents: number; // monthlySpend + activeInstallments + otherMonthsNonInstallment
+  availableLimitCents: number; // Math.max(0, limitCents - totalCommittedCents)
+  usedPercent: number;
+  isTargetMonthPaid: boolean;
+}
+
+export function isInstallmentTransaction(tx: Transaction): boolean {
+  return tx.totalInstallments > 1 || Boolean(tx.installmentGroupId);
+}
+
+export function computeCardLimitBreakdown(
+  card: CreditCard,
+  targetMonth: string,
+  transactions: Transaction[],
+  invoices: CardInvoiceSummary[]
+): CardLimitBreakdown {
+  const paidInvoiceMonths = new Set(
+    invoices
+      .filter((inv) => inv.cardId === card.id && inv.status === 'paid')
+      .map((inv) => inv.invoiceMonth)
+  );
+  const isTargetMonthPaid = paidInvoiceMonths.has(targetMonth);
+
+  const cardExpenseTxs = transactions.filter(
+    (tx) => tx.paymentMethod === 'card' && tx.cardId === card.id && tx.type === 'expense'
+  );
+
+  const isTxUnpaid = (tx: Transaction) =>
+    tx.status !== 'paid' && !paidInvoiceMonths.has(tx.invoiceMonth);
+
+  let itemizedMonthlySpendCents = 0;
+  let consolidatedMonthlySpendCents = 0;
+  let consolidatedMonthlyTxId: string | null = null;
+  let targetMonthInstallmentsCents = 0;
+  let activeInstallmentsCents = 0;
+  let otherMonthsNonInstallmentCents = 0;
+  let targetMonthTotalInvoiceCents = 0;
+
+  // Normalize paid status for installment groups if their invoice is paid
+  const normalizedCardTxs: Transaction[] = [];
+
+  for (const tx of cardExpenseTxs) {
+    const installment = isInstallmentTransaction(tx);
+    const unpaid = isTxUnpaid(tx);
+
+    if (installment) {
+      normalizedCardTxs.push(unpaid ? tx : { ...tx, status: 'paid' });
+    }
+
+    if (tx.invoiceMonth === targetMonth) {
+      targetMonthTotalInvoiceCents += tx.amountCents;
+      if (installment) {
+        if (unpaid) {
+          targetMonthInstallmentsCents += tx.amountCents;
+        }
+      } else if (unpaid) {
+        if (tx.notes.startsWith('[Gasto Total]')) {
+          consolidatedMonthlySpendCents += tx.amountCents;
+          if (!consolidatedMonthlyTxId) {
+            consolidatedMonthlyTxId = tx.id;
+          }
+        } else {
+          itemizedMonthlySpendCents += tx.amountCents;
+        }
+      }
+    } else if (unpaid && !installment) {
+      otherMonthsNonInstallmentCents += tx.amountCents;
+    }
+
+    if (installment && unpaid) {
+      activeInstallmentsCents += tx.amountCents;
+    }
+  }
+
+  const activeInstallmentGroups = computeInstallmentGroups(normalizedCardTxs).filter(
+    (g) => g.remainingCents > 0
+  );
+
+  const monthlySpendCents = itemizedMonthlySpendCents + consolidatedMonthlySpendCents;
+  const totalCommittedCents =
+    monthlySpendCents + activeInstallmentsCents + otherMonthsNonInstallmentCents;
+  const availableLimitCents = Math.max(0, card.limitCents - totalCommittedCents);
+  const usedPercent =
+    card.limitCents > 0
+      ? Math.min(100, Math.round((totalCommittedCents / card.limitCents) * 100))
+      : 0;
+
+  return {
+    limitCents: card.limitCents,
+    monthlySpendCents,
+    itemizedMonthlySpendCents,
+    consolidatedMonthlySpendCents,
+    consolidatedMonthlyTxId,
+    targetMonthInstallmentsCents,
+    targetMonthTotalInvoiceCents,
+    activeInstallmentsCents,
+    activeInstallmentGroups,
+    otherMonthsNonInstallmentCents,
+    totalCommittedCents,
+    availableLimitCents,
+    usedPercent,
+    isTargetMonthPaid,
+  };
+}
+
 export function computeInstallmentGroups(
   transactions: Transaction[]
 ): InstallmentGroupSummary[] {
@@ -426,6 +584,8 @@ export interface CashflowPoint {
   monthKey: string;
   label: string;
   receitas: number;
+  receitasRecebidas: number;
+  receitasPendentes: number;
   despesas: number;
   saldo: number;
 }
@@ -443,6 +603,8 @@ export function buildCashflowSeries(
       monthKey: mk,
       label: formatShortMonth(mk),
       receitas: Math.round(summary.incomeCents) / 100,
+      receitasRecebidas: Math.round(summary.paidIncomeCents) / 100,
+      receitasPendentes: Math.round(summary.pendingIncomeCents) / 100,
       despesas: Math.round(summary.expenseCents) / 100,
       saldo: Math.round(summary.netCents) / 100,
     });
@@ -455,6 +617,8 @@ export interface CategoryBreakdownItem {
   name: string;
   color: string;
   amountCents: number;
+  paidAmountCents: number;
+  pendingAmountCents: number;
   amountBRL: number;
   percentage: number;
 }
@@ -466,25 +630,34 @@ export function buildCategoryBreakdown(
   categories: Category[]
 ): CategoryBreakdownItem[] {
   const catMap = new Map(categories.map((c) => [c.id, c]));
-  const totals = new Map<string, number>();
+  const totals = new Map<string, { total: number; paid: number; pending: number }>();
   let grandTotal = 0;
 
   for (const tx of transactions) {
     if (tx.date.slice(0, 7) !== monthKey || tx.type !== type) continue;
-    totals.set(tx.categoryId, (totals.get(tx.categoryId) ?? 0) + tx.amountCents);
+    const entry = totals.get(tx.categoryId) ?? { total: 0, paid: 0, pending: 0 };
+    entry.total += tx.amountCents;
+    if (tx.status === 'paid') {
+      entry.paid += tx.amountCents;
+    } else {
+      entry.pending += tx.amountCents;
+    }
+    totals.set(tx.categoryId, entry);
     grandTotal += tx.amountCents;
   }
 
   const items: CategoryBreakdownItem[] = [];
-  for (const [categoryId, amountCents] of totals.entries()) {
+  for (const [categoryId, entry] of totals.entries()) {
     const cat = catMap.get(categoryId);
     items.push({
       categoryId,
       name: cat?.name ?? 'Sem categoria',
       color: cat?.color ?? '#64748B',
-      amountCents,
-      amountBRL: amountCents / 100,
-      percentage: grandTotal > 0 ? Math.round((amountCents / grandTotal) * 1000) / 10 : 0,
+      amountCents: entry.total,
+      paidAmountCents: entry.paid,
+      pendingAmountCents: entry.pending,
+      amountBRL: entry.total / 100,
+      percentage: grandTotal > 0 ? Math.round((entry.total / grandTotal) * 1000) / 10 : 0,
     });
   }
 
@@ -537,7 +710,13 @@ export function generateTransactionsCSV(
         tx.paymentMethod === 'account' ? 'Conta' : 'Cartão de Crédito',
         origin,
         parcela,
-        tx.status === 'paid' ? 'Pago' : 'Pendente',
+        tx.status === 'paid'
+          ? tx.type === 'income'
+            ? 'Recebida'
+            : 'Paga'
+          : tx.type === 'income'
+            ? 'Pendente (A receber)'
+            : 'Pendente (A pagar)',
         (signedCents / 100).toFixed(2).replace('.', ','),
         tx.notes,
       ]

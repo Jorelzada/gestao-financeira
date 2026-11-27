@@ -62,7 +62,7 @@ function translateAuthError(error: unknown): string {
     return 'Muitas tentativas seguidas. Aguarde alguns instantes e tente novamente.';
   }
   if (code === 'auth/credential-already-in-use') {
-    return 'Esta conta Google já possui dados próprios no FinanceFlow. Faça sair e entre diretamente com o Google.';
+    return 'Esta conta Google já possui dados próprios no Gestão Financeira. Faça sair e entre diretamente com o Google.';
   }
   if (code === 'auth/network-request-failed') {
     return 'Falha de conexão ao autenticar. Verifique sua internet e tente novamente.';

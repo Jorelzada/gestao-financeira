@@ -200,7 +200,7 @@ service cloud.firestore {
                ? (isValidId(data.accountId) && data.cardId == '')
                : (data.type == 'expense' && isValidId(data.cardId) && data.accountId == '')
              ) &&
-             isSafeInt(data.dayOfMonth, 1, 28) &&
+             isSafeInt(data.dayOfMonth, 1, 31) &&
              data.frequency in ['monthly', 'weekly', 'yearly'] &&
              data.active is bool &&
              data.lastGeneratedMonth is string && data.lastGeneratedMonth.size() <= 7 &&

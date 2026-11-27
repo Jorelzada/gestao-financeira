@@ -1,19 +1,35 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { PauseCircle, Pencil, PlayCircle, Plus, Repeat, Trash2, Zap } from 'lucide-react';
+import {
+  CheckCircle2,
+  Clock,
+  PauseCircle,
+  Pencil,
+  PlayCircle,
+  Plus,
+  Repeat,
+  Trash2,
+  Zap,
+} from 'lucide-react';
 import { ConfirmDialog, Modal } from '../components/ui/Modal';
 import { useAuth } from '../contexts/AuthContext';
 import { useFinanceData } from '../contexts/FinanceDataContext';
 import {
+  buildRecurrenceDateStr,
   formatCentsToBRL,
   formatCentsToInput,
+  formatDateBR,
   formatMonthLabel,
+  getTodayDateStr,
   parseBRLToCents,
+  resolveRecurrenceTransactionStatus,
+  shiftMonth,
 } from '../lib/financeMath';
 import {
   createRecurrence,
   deleteRecurrence,
   generateTransactionFromRecurrence,
   toggleRecurrenceActive,
+  toggleTransactionStatus,
   updateRecurrence,
 } from '../services/firestoreService';
 import type {
@@ -25,7 +41,7 @@ import type {
 
 export function RecurrencesPage() {
   const { user } = useAuth();
-  const { activeMonth, recurrences, categories, accounts, cards } = useFinanceData();
+  const { activeMonth, recurrences, transactions, categories, accounts, cards } = useFinanceData();
 
   const activeAccounts = accounts.filter((a) => !a.archived);
   const activeCards = cards.filter((c) => !c.archived);
@@ -45,7 +61,8 @@ export function RecurrencesPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('account');
   const [accountId, setAccountId] = useState('');
   const [cardId, setCardId] = useState('');
-  const [dayOfMonth, setDayOfMonth] = useState(5);
+  const [startDate, setStartDate] = useState(getTodayDateStr());
+  const [dayOfMonth, setDayOfMonth] = useState(() => Number.parseInt(getTodayDateStr().slice(8, 10), 10) || 5);
   const [frequency, setFrequency] = useState<RecurrenceFrequency>('monthly');
 
   useEffect(() => {
@@ -59,6 +76,7 @@ export function RecurrencesPage() {
   }, [type, categories, categoryId, paymentMethod]);
 
   const openCreate = () => {
+    const today = getTodayDateStr();
     setEditing(null);
     setType('expense');
     setDescription('');
@@ -67,7 +85,8 @@ export function RecurrencesPage() {
     setPaymentMethod('account');
     setAccountId(activeAccounts[0]?.id || '');
     setCardId(activeCards[0]?.id || '');
-    setDayOfMonth(5);
+    setStartDate(today);
+    setDayOfMonth(Number.parseInt(today.slice(8, 10), 10) || 5);
     setFrequency('monthly');
     setModalOpen(true);
   };
@@ -81,6 +100,7 @@ export function RecurrencesPage() {
     setPaymentMethod(rec.paymentMethod);
     setAccountId(rec.accountId || activeAccounts[0]?.id || '');
     setCardId(rec.cardId || activeCards[0]?.id || '');
+    setStartDate(buildRecurrenceDateStr(activeMonth, rec.dayOfMonth));
     setDayOfMonth(rec.dayOfMonth);
     setFrequency(rec.frequency);
     setModalOpen(true);
@@ -108,6 +128,7 @@ export function RecurrencesPage() {
           active: editing.active,
         });
       } else {
+        const closingDay = cardId ? cardMap.get(cardId)?.closingDay : undefined;
         await createRecurrence(user.uid, {
           type,
           description: description.trim(),
@@ -116,7 +137,8 @@ export function RecurrencesPage() {
           paymentMethod,
           accountId: paymentMethod === 'account' ? accountId : '',
           cardId: paymentMethod === 'card' ? cardId : '',
-          dayOfMonth,
+          cardClosingDay: closingDay,
+          startDate,
           frequency,
         });
       }
@@ -137,8 +159,11 @@ export function RecurrencesPage() {
     }
   };
 
+  const hasTxInMonth = (recId: string, monthKey: string) =>
+    transactions.find((tx) => tx.recurrenceId === recId && tx.date.slice(0, 7) === monthKey);
+
   const pendingForActiveMonth = recurrences.filter(
-    (r) => r.active && r.lastGeneratedMonth !== activeMonth
+    (r) => r.active && !hasTxInMonth(r.id, activeMonth)
   );
 
   const handleGenerateAllPending = async () => {
@@ -165,6 +190,16 @@ export function RecurrencesPage() {
     }
   };
 
+  const todayStr = getTodayDateStr();
+  const previewBaseMonth = startDate.slice(0, 7);
+  const previewNextMonth = shiftMonth(previewBaseMonth, 1);
+  const previewBaseStatus = resolveRecurrenceTransactionStatus(startDate, todayStr);
+  const previewDay = Number.parseInt(startDate.slice(8, 10), 10) || 1;
+  const previewNextDate = buildRecurrenceDateStr(previewNextMonth, previewDay);
+  const previewNextStatus = resolveRecurrenceTransactionStatus(previewNextDate, todayStr);
+
+  const nextOfActiveMonth = shiftMonth(activeMonth, 1);
+
   return (
     <div className="space-y-6">
       <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -173,7 +208,7 @@ export function RecurrencesPage() {
             Modelos Recorrentes ({recurrences.length})
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Automatize lançamentos fixos como aluguel, assinaturas, internet ou salário para {formatMonthLabel(activeMonth)}.
+            Ao cadastrar uma recorrência com sua data, o sistema define automaticamente como paga ou a pagar conforme o dia de hoje e já replica para o mês seguinte.
           </p>
         </div>
 
@@ -206,13 +241,17 @@ export function RecurrencesPage() {
             Nenhuma recorrência cadastrada.
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Cadastre suas despesas e receitas fixas para lançá-las no mês com um clique.
+            Cadastre despesas e receitas fixas com a data de vencimento; o sistema marca automaticamente o status e agenda no mês seguinte.
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {recurrences.map((rec) => {
-            const generatedThisMonth = rec.lastGeneratedMonth === activeMonth;
+            const txActive = hasTxInMonth(rec.id, activeMonth);
+            const txNext = hasTxInMonth(rec.id, nextOfActiveMonth);
+            const expectedDateActive = buildRecurrenceDateStr(activeMonth, rec.dayOfMonth);
+            const autoExpectedStatus = resolveRecurrenceTransactionStatus(expectedDateActive, todayStr);
+
             return (
               <div
                 key={rec.id}
@@ -223,14 +262,83 @@ export function RecurrencesPage() {
                     <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shrink-0">
                       <Repeat className="w-4 h-4" />
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 space-y-1">
                       <h3 className="text-sm font-semibold text-slate-900 dark:text-white truncate">
                         {rec.description}
                       </h3>
                       <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Dia {rec.dayOfMonth} · {catMap.get(rec.categoryId)?.name ?? 'Outros'} ·{' '}
+                        Todo dia {rec.dayOfMonth} · {catMap.get(rec.categoryId)?.name ?? 'Outros'} ·{' '}
                         {rec.active ? 'Ativa' : 'Pausada'}
                       </p>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs pt-0.5">
+                        {txActive ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              user &&
+                              void toggleTransactionStatus(
+                                user.uid,
+                                txActive.id,
+                                txActive.status === 'paid' ? 'pending' : 'paid'
+                              )
+                            }
+                            className={`inline-flex items-center gap-1 font-semibold ${
+                              txActive.status === 'paid'
+                                ? 'text-[#16A34A]'
+                                : 'text-amber-600 dark:text-amber-400'
+                            }`}
+                            title="Clique para alternar o status neste mês"
+                          >
+                            {txActive.status === 'paid' ? (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>
+                                  {rec.type === 'income' ? 'Recebida' : 'Paga'} ({formatDateBR(txActive.date)})
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <Clock className="w-3.5 h-3.5" />
+                                <span>
+                                  {rec.type === 'income' ? 'A receber' : 'A pagar'} ({formatDateBR(txActive.date)})
+                                </span>
+                              </>
+                            )}
+                          </button>
+                        ) : (
+                          <span className="text-slate-500 dark:text-slate-400">
+                            Previsto em {formatDateBR(expectedDateActive)}:{' '}
+                            <strong
+                              className={
+                                autoExpectedStatus === 'paid'
+                                  ? 'text-[#16A34A]'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }
+                            >
+                              {autoExpectedStatus === 'paid'
+                                ? rec.type === 'income'
+                                  ? 'Recebida'
+                                  : 'Paga'
+                                : rec.type === 'income'
+                                  ? 'A receber'
+                                  : 'A pagar'}
+                            </strong>
+                          </span>
+                        )}
+
+                        {txNext && (
+                          <span className="text-slate-500 dark:text-slate-400">
+                            · Próx. mês ({nextOfActiveMonth}):{' '}
+                            {txNext.status === 'paid'
+                              ? rec.type === 'income'
+                                ? 'Recebida'
+                                : 'Paga'
+                              : rec.type === 'income'
+                                ? 'A receber'
+                                : 'A pagar'}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <span
@@ -246,15 +354,15 @@ export function RecurrencesPage() {
                 <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                   <button
                     type="button"
-                    disabled={busy || !rec.active || generatedThisMonth}
+                    disabled={busy || !rec.active || Boolean(txActive)}
                     onClick={() => void handleGenerateOne(rec)}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                      generatedThisMonth
+                      txActive
                         ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 cursor-default'
                         : 'bg-[#2563EB]/10 text-[#2563EB] hover:bg-[#2563EB]/20 disabled:opacity-50'
                     }`}
                   >
-                    {generatedThisMonth
+                    {txActive
                       ? `Lançada em ${activeMonth}`
                       : `Lançar em ${activeMonth}`}
                   </button>
@@ -302,6 +410,11 @@ export function RecurrencesPage() {
       <Modal
         open={modalOpen}
         title={editing ? 'Editar Recorrência' : 'Nova Recorrência'}
+        subtitle={
+          editing
+            ? 'Altere os dados padrão das próximas ocorrências.'
+            : 'O status (paga ou a pagar) é detectado pela data escolhida em relação a hoje e replicado ao mês seguinte.'
+        }
         onClose={() => setModalOpen(false)}
       >
         <form onSubmit={(e) => void handleSave(e)} className="space-y-4">
@@ -315,7 +428,7 @@ export function RecurrencesPage() {
                   : 'text-slate-600 dark:text-slate-300'
               }`}
             >
-              Despesa Fixa
+              Despesa / Dívida Fixa
             </button>
             <button
               type="button"
@@ -340,7 +453,7 @@ export function RecurrencesPage() {
               maxLength={120}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ex.: Aluguel, Internet, Salário..."
+              placeholder="Ex.: Aluguel, Internet, Financiamento, Salário..."
               className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
             />
           </div>
@@ -356,25 +469,50 @@ export function RecurrencesPage() {
                 inputMode="decimal"
                 value={amountText}
                 onChange={(e) => setAmountText(e.target.value)}
+                placeholder="0,00"
                 className="w-full px-3 py-2 text-sm font-mono tabular-nums rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
               />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Dia (1-28)
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={28}
-                required
-                value={dayOfMonth}
-                onChange={(e) =>
-                  setDayOfMonth(Math.max(1, Math.min(28, Number(e.target.value) || 1)))
-                }
-                className="w-full px-3 py-2 text-sm tabular-nums rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
-              />
-            </div>
+
+            {editing ? (
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Dia do Mês (1-31)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={31}
+                  required
+                  value={dayOfMonth}
+                  onChange={(e) =>
+                    setDayOfMonth(Math.max(1, Math.min(31, Number(e.target.value) || 1)))
+                  }
+                  className="w-full px-3 py-2 text-sm tabular-nums rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Data de Referência
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={startDate}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setStartDate(next);
+                    const parsedDay = Number.parseInt(next.slice(8, 10), 10);
+                    if (Number.isFinite(parsedDay)) {
+                      setDayOfMonth(Math.max(1, Math.min(31, parsedDay)));
+                    }
+                  }}
+                  className="w-full px-3 py-2 text-sm tabular-nums rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                />
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                 Frequência
@@ -465,6 +603,50 @@ export function RecurrencesPage() {
               </div>
             )}
           </div>
+
+          {!editing && startDate && (
+            <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1.5 text-xs">
+              <p className="font-semibold text-slate-900 dark:text-white">
+                Detecção automática (hoje é {formatDateBR(todayStr)}):
+              </p>
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
+                <span>Em {formatDateBR(startDate)}:</span>
+                <span
+                  className={`font-semibold ${
+                    previewBaseStatus === 'paid'
+                      ? 'text-[#16A34A]'
+                      : 'text-amber-600 dark:text-amber-400'
+                  }`}
+                >
+                  {previewBaseStatus === 'paid'
+                    ? type === 'income'
+                      ? 'Recebida automaticamente'
+                      : 'Paga automaticamente'
+                    : type === 'income'
+                      ? 'Pendente (A receber)'
+                      : 'A pagar (Pendente)'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
+                <span>Mês seguinte ({formatDateBR(previewNextDate)}):</span>
+                <span
+                  className={`font-semibold ${
+                    previewNextStatus === 'paid'
+                      ? 'text-[#16A34A]'
+                      : 'text-amber-600 dark:text-amber-400'
+                  }`}
+                >
+                  {previewNextStatus === 'paid'
+                    ? type === 'income'
+                      ? 'Adicionada como Recebida'
+                      : 'Adicionada como Paga'
+                    : type === 'income'
+                      ? 'Adicionada como Pendente (A receber)'
+                      : 'Adicionada como A pagar'}
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="pt-3 flex justify-end gap-3 border-t border-slate-200 dark:border-slate-800">
             <button

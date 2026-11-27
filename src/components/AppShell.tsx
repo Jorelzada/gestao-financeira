@@ -146,7 +146,7 @@ export function AppShell({
             <Wallet className="w-4 h-4" />
           </div>
           <span className="text-base font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap">
-            FinanceFlow
+            Gestão Financeira
           </span>
         </div>
         <button

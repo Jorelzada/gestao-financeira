@@ -1,8 +1,12 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { getCurrentMonthKey } from '../lib/financeMath';
+import { getCurrentMonthKey, shiftMonth } from '../lib/financeMath';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { ensureUserWorkspace, updateUserTheme } from '../services/firestoreService';
+import {
+  ensureUserWorkspace,
+  syncRecurrencesThroughNextMonth,
+  updateUserTheme,
+} from '../services/firestoreService';
 import type {
   Account,
   Asset,
@@ -215,6 +219,42 @@ export function FinanceDataProvider({ children }: { children: React.ReactNode })
       }
     };
   }, [authReady, user, emailVerified]);
+
+  const syncedBatchKeysRef = useRef<Set<string>>(new Set());
+
+  // Automatically propagate active recurrences into current month and next month
+  useEffect(() => {
+    if (loading || !user || (!user.isAnonymous && !emailVerified)) return;
+    if (recurrences.length === 0) return;
+
+    const currentMonth = getCurrentMonthKey();
+    const nextMonth = shiftMonth(currentMonth, 1);
+
+    const needsSync = recurrences.some((rec) => {
+      if (!rec.active) return false;
+      if (rec.lastGeneratedMonth && rec.lastGeneratedMonth >= nextMonth) return false;
+      const key = `${user.uid}__${rec.id}__${nextMonth}`;
+      return !syncedBatchKeysRef.current.has(key);
+    });
+
+    if (!needsSync) return;
+
+    for (const rec of recurrences) {
+      if (rec.active) {
+        syncedBatchKeysRef.current.add(`${user.uid}__${rec.id}__${nextMonth}`);
+      }
+    }
+
+    void syncRecurrencesThroughNextMonth(user.uid, recurrences, transactions, cards).catch(
+      (err) => {
+        setDataError(
+          err instanceof Error
+            ? err.message
+            : 'Não foi possível sincronizar recorrências para o próximo mês.'
+        );
+      }
+    );
+  }, [loading, user, emailVerified, recurrences, transactions, cards]);
 
   return (
     <FinanceDataContext.Provider

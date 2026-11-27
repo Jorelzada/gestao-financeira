@@ -307,7 +307,7 @@ function AuthenticatedWorkspace() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F5F7FA] dark:bg-[#0B1120]">
         <div className="text-sm font-medium text-slate-500 dark:text-slate-400">
-          Carregando FinanceFlow...
+          Carregando Gestão Financeira...
         </div>
       </div>
     );
