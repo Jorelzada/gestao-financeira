@@ -143,7 +143,10 @@ export function getDateForInvoiceMonth(
   closingDay: number,
   referenceDate: string = getTodayDateStr()
 ): string {
-  if (computeInvoiceMonth(referenceDate, closingDay) === targetInvoiceMonth) {
+  if (
+    referenceDate.slice(0, 7) === targetInvoiceMonth &&
+    computeInvoiceMonth(referenceDate, closingDay) === targetInvoiceMonth
+  ) {
     return referenceDate;
   }
   if (closingDay > 1) {
@@ -151,6 +154,18 @@ export function getDateForInvoiceMonth(
   }
   const prevMonth = shiftMonth(targetInvoiceMonth, -1);
   return `${prevMonth}-15`;
+}
+
+/**
+ * Returns the accounting month (YYYY-MM) of a transaction.
+ * Card transactions use their billing `invoiceMonth` so purchases made after closingDay
+ * or consolidated monthly card spends belong strictly to their respective invoice month.
+ */
+export function getTransactionMonthKey(tx: Transaction): string {
+  if (tx.paymentMethod === 'card' && tx.invoiceMonth) {
+    return tx.invoiceMonth;
+  }
+  return tx.date.slice(0, 7);
 }
 
 /**
@@ -261,7 +276,7 @@ export function computeMonthlySummary(
   let pendingExpenseCents = 0;
 
   for (const tx of transactions) {
-    if (tx.date.slice(0, 7) !== monthKey) continue;
+    if (getTransactionMonthKey(tx) !== monthKey) continue;
     if (tx.type === 'income') {
       incomeCents += tx.amountCents;
       if (tx.status === 'paid') paidIncomeCents += tx.amountCents;
@@ -634,7 +649,7 @@ export function buildCategoryBreakdown(
   let grandTotal = 0;
 
   for (const tx of transactions) {
-    if (tx.date.slice(0, 7) !== monthKey || tx.type !== type) continue;
+    if (getTransactionMonthKey(tx) !== monthKey || tx.type !== type) continue;
     const entry = totals.get(tx.categoryId) ?? { total: 0, paid: 0, pending: 0 };
     entry.total += tx.amountCents;
     if (tx.status === 'paid') {

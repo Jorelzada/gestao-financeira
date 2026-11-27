@@ -14,6 +14,7 @@ import {
   computeNetWorth,
   generateTransactionsCSV,
   getDateForInvoiceMonth,
+  getTransactionMonthKey,
   parseBRLToCents,
   resolveRecurrenceTransactionStatus,
   shiftMonth,
@@ -598,5 +599,106 @@ describe('financeMath — Cent-Exact Financial Rules', () => {
     // Available = 300000 - 50000 - 120000 = 130000
     expect(breakdown.availableLimitCents).toBe(130000);
     expect(breakdown.totalCommittedCents).toBe(computeCardUsedLimitCents('card_1', invoices));
+  });
+
+  it('isolates monthly expenses strictly per month even when card purchases or invoice spends are dated in prior month', () => {
+    // getDateForInvoiceMonth for Dec on Nov 27 must stay inside December when closingDay > 1
+    expect(getDateForInvoiceMonth('2026-12', 10, '2026-11-27')).toBe('2026-12-01');
+
+    const txs: Transaction[] = [
+      // Paid November account expense
+      {
+        id: 'nov_acc',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Aluguel Nov',
+        amountCents: 75000,
+        date: '2026-11-10',
+        categoryId: 'c1',
+        paymentMethod: 'account',
+        accountId: 'a1',
+        cardId: '',
+        invoiceMonth: '',
+        status: 'paid',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+      // Pending November card expense
+      {
+        id: 'nov_card',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Fatura Nov',
+        amountCents: 75000,
+        date: '2026-11-01',
+        categoryId: 'c1',
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: 'card_1',
+        invoiceMonth: '2026-11',
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+      // December card purchase logged on 2026-11-27 (after closingDay) -> invoiceMonth 2026-12
+      {
+        id: 'dec_card',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Fatura Dez',
+        amountCents: 75000,
+        date: '2026-11-27',
+        categoryId: 'c1',
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: 'card_1',
+        invoiceMonth: '2026-12',
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+      // December account recurrence
+      {
+        id: 'dec_acc',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Aluguel Dez',
+        amountCents: 75000,
+        date: '2026-12-10',
+        categoryId: 'c1',
+        paymentMethod: 'account',
+        accountId: 'a1',
+        cardId: '',
+        invoiceMonth: '',
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+    ];
+
+    expect(getTransactionMonthKey(txs[0])).toBe('2026-11');
+    expect(getTransactionMonthKey(txs[2])).toBe('2026-12');
+
+    const novSummary = computeMonthlySummary('2026-11', txs);
+    expect(novSummary.expenseCents).toBe(150000);
+    expect(novSummary.paidExpenseCents).toBe(75000);
+    expect(novSummary.pendingExpenseCents).toBe(75000);
+
+    const decSummary = computeMonthlySummary('2026-12', txs);
+    expect(decSummary.expenseCents).toBe(150000);
+    expect(decSummary.paidExpenseCents).toBe(0);
+    expect(decSummary.pendingExpenseCents).toBe(150000);
   });
 });

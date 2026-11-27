@@ -31,6 +31,8 @@ import {
   formatCentsToBRL,
   formatDateBR,
   formatMonthLabel,
+  formatShortMonth,
+  getTransactionMonthKey,
 } from '../lib/financeMath';
 
 interface DashboardPageProps {
@@ -96,7 +98,7 @@ export function DashboardPage({
   const invoices = computeCardInvoices(cards, transactions, invoicePayments);
   const openInvoices = invoices.filter((inv) => inv.status !== 'paid');
   const monthTransactions = transactions
-    .filter((tx) => tx.date.slice(0, 7) === activeMonth)
+    .filter((tx) => getTransactionMonthKey(tx) === activeMonth)
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 6);
 
@@ -105,7 +107,7 @@ export function DashboardPage({
 
   const spentByCategory = new Map<string, number>();
   for (const tx of transactions) {
-    if (tx.date.slice(0, 7) === activeMonth && tx.type === 'expense') {
+    if (getTransactionMonthKey(tx) === activeMonth && tx.type === 'expense') {
       spentByCategory.set(
         tx.categoryId,
         (spentByCategory.get(tx.categoryId) ?? 0) + tx.amountCents
@@ -132,7 +134,7 @@ export function DashboardPage({
 
         <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>Receitas do Mês</span>
+            <span>Receitas do Mês ({formatShortMonth(activeMonth)})</span>
             <ArrowUpRight className="w-4 h-4 text-[#16A34A]" />
           </div>
           <p className="mt-2 text-2xl font-bold font-mono tabular-nums text-[#16A34A]">
@@ -150,7 +152,7 @@ export function DashboardPage({
 
         <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>Despesas do Mês</span>
+            <span>Despesas do Mês ({formatShortMonth(activeMonth)})</span>
             <ArrowDownRight className="w-4 h-4 text-[#DC2626]" />
           </div>
           <p className="mt-2 text-2xl font-bold font-mono tabular-nums text-[#DC2626]">

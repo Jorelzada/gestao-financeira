@@ -16,6 +16,7 @@ import {
   formatCentsToBRL,
   formatDateBR,
   formatMonthLabel,
+  getTransactionMonthKey,
 } from '../lib/financeMath';
 import {
   deleteTransaction,
@@ -56,7 +57,7 @@ export function TransactionsPage() {
     const q = search.trim().toLowerCase();
     return transactions
       .filter((tx) => {
-        if (onlyActiveMonth && tx.date.slice(0, 7) !== activeMonth) return false;
+        if (onlyActiveMonth && getTransactionMonthKey(tx) !== activeMonth) return false;
         if (typeFilter !== 'all' && tx.type !== typeFilter) return false;
         if (statusFilter !== 'all' && tx.status !== statusFilter) return false;
         if (categoryFilter !== 'all' && tx.categoryId !== categoryFilter) return false;

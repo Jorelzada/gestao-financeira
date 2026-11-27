@@ -18,6 +18,7 @@ import {
   formatCentsToBRL,
   formatMonthLabel,
   generateTransactionsCSV,
+  getTransactionMonthKey,
 } from '../lib/financeMath';
 
 function triggerDownload(filename: string, content: string, mimeType: string) {
@@ -68,7 +69,7 @@ export function ReportsPage() {
   const cardExpenseCents = transactions
     .filter(
       (tx) =>
-        tx.date.slice(0, 7) === activeMonth &&
+        getTransactionMonthKey(tx) === activeMonth &&
         tx.type === 'expense' &&
         tx.paymentMethod === 'card'
     )
@@ -77,7 +78,7 @@ export function ReportsPage() {
   const accountExpenseCents = transactions
     .filter(
       (tx) =>
-        tx.date.slice(0, 7) === activeMonth &&
+        getTransactionMonthKey(tx) === activeMonth &&
         tx.type === 'expense' &&
         tx.paymentMethod === 'account'
     )

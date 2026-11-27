@@ -7,6 +7,7 @@ import {
   formatCentsToBRL,
   formatCentsToInput,
   formatMonthLabel,
+  getTransactionMonthKey,
   parseBRLToCents,
 } from '../lib/financeMath';
 import { deleteBudget, upsertBudget } from '../services/firestoreService';
@@ -32,7 +33,7 @@ export function BudgetsPage() {
   const spentByCat = useMemo(() => {
     const map = new Map<string, number>();
     for (const tx of transactions) {
-      if (tx.type === 'expense' && tx.date.slice(0, 7) === activeMonth) {
+      if (tx.type === 'expense' && getTransactionMonthKey(tx) === activeMonth) {
         map.set(tx.categoryId, (map.get(tx.categoryId) ?? 0) + tx.amountCents);
       }
     }
