@@ -2,6 +2,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  type DocumentReference,
   getDoc,
   getDocs,
   query,
@@ -59,6 +60,16 @@ function clampInt(value: number, min: number, max: number): number {
 
 function safeColor(color: string, fallback = '#2563EB'): string {
   return /^#[0-9a-fA-F]{6}$/.test(color) ? color : fallback;
+}
+
+async function batchDeleteRefs(refs: DocumentReference[]): Promise<void> {
+  for (let i = 0; i < refs.length; i += 400) {
+    const batch = writeBatch(db);
+    for (const ref of refs.slice(i, i + 400)) {
+      batch.delete(ref);
+    }
+    await batch.commit();
+  }
 }
 
 const DEFAULT_CATEGORIES: Array<{
@@ -262,7 +273,43 @@ export async function toggleAccountArchived(
 export async function deleteAccount(userId: string, accountId: string): Promise<void> {
   const path = `users/${userId}/accounts/${accountId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'accounts', accountId));
+    const [txSnap, transferSnap, recSnap] = await Promise.all([
+      getDocs(query(collection(db, 'users', userId, 'transactions'), where('userId', '==', userId))),
+      getDocs(query(collection(db, 'users', userId, 'transfers'), where('userId', '==', userId))),
+      getDocs(query(collection(db, 'users', userId, 'recurrences'), where('userId', '==', userId))),
+    ]);
+
+    const refsToDelete: DocumentReference[] = [];
+    const deletedRecurrenceIds = new Set<string>();
+
+    for (const d of recSnap.docs) {
+      const data = d.data();
+      if (data.paymentMethod === 'account' && data.accountId === accountId) {
+        deletedRecurrenceIds.add(d.id);
+        refsToDelete.push(d.ref);
+      }
+    }
+
+    for (const d of txSnap.docs) {
+      const data = d.data();
+      const linkedToAccount =
+        data.paymentMethod === 'account' && data.accountId === accountId;
+      const linkedToDeletedRec =
+        typeof data.recurrenceId === 'string' && deletedRecurrenceIds.has(data.recurrenceId);
+      if (linkedToAccount || linkedToDeletedRec) {
+        refsToDelete.push(d.ref);
+      }
+    }
+
+    for (const d of transferSnap.docs) {
+      const data = d.data();
+      if (data.fromAccountId === accountId || data.toAccountId === accountId) {
+        refsToDelete.push(d.ref);
+      }
+    }
+
+    refsToDelete.push(doc(db, 'users', userId, 'accounts', accountId));
+    await batchDeleteRefs(refsToDelete);
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, path);
   }
@@ -383,7 +430,42 @@ export async function updateCard(
 export async function deleteCard(userId: string, cardId: string): Promise<void> {
   const path = `users/${userId}/cards/${cardId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'cards', cardId));
+    const [txSnap, invoicePaySnap, recSnap] = await Promise.all([
+      getDocs(query(collection(db, 'users', userId, 'transactions'), where('userId', '==', userId))),
+      getDocs(query(collection(db, 'users', userId, 'invoicePayments'), where('userId', '==', userId))),
+      getDocs(query(collection(db, 'users', userId, 'recurrences'), where('userId', '==', userId))),
+    ]);
+
+    const refsToDelete: DocumentReference[] = [];
+    const deletedRecurrenceIds = new Set<string>();
+
+    for (const d of recSnap.docs) {
+      const data = d.data();
+      if (data.paymentMethod === 'card' && data.cardId === cardId) {
+        deletedRecurrenceIds.add(d.id);
+        refsToDelete.push(d.ref);
+      }
+    }
+
+    for (const d of txSnap.docs) {
+      const data = d.data();
+      const linkedToCard = data.paymentMethod === 'card' && data.cardId === cardId;
+      const linkedToDeletedRec =
+        typeof data.recurrenceId === 'string' && deletedRecurrenceIds.has(data.recurrenceId);
+      if (linkedToCard || linkedToDeletedRec) {
+        refsToDelete.push(d.ref);
+      }
+    }
+
+    for (const d of invoicePaySnap.docs) {
+      const data = d.data();
+      if (data.cardId === cardId) {
+        refsToDelete.push(d.ref);
+      }
+    }
+
+    refsToDelete.push(doc(db, 'users', userId, 'cards', cardId));
+    await batchDeleteRefs(refsToDelete);
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, path);
   }
@@ -1073,9 +1155,45 @@ export async function syncRecurrencesThroughNextMonth(
 export async function deleteRecurrence(userId: string, recurrenceId: string): Promise<void> {
   const path = `users/${userId}/recurrences/${recurrenceId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'recurrences', recurrenceId));
+    const txSnap = await getDocs(
+      query(collection(db, 'users', userId, 'transactions'), where('userId', '==', userId))
+    );
+
+    const refsToDelete: DocumentReference[] = [];
+    for (const d of txSnap.docs) {
+      if (d.data().recurrenceId === recurrenceId) {
+        refsToDelete.push(d.ref);
+      }
+    }
+    refsToDelete.push(doc(db, 'users', userId, 'recurrences', recurrenceId));
+    await batchDeleteRefs(refsToDelete);
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+export async function cleanupOrphanedRecords(
+  userId: string,
+  orphanIds: {
+    transactionIds: string[];
+    transferIds: string[];
+    invoicePaymentIds: string[];
+    recurrenceIds: string[];
+  }
+): Promise<void> {
+  const refsToDelete: DocumentReference[] = [
+    ...orphanIds.transactionIds.map((id) => doc(db, 'users', userId, 'transactions', id)),
+    ...orphanIds.transferIds.map((id) => doc(db, 'users', userId, 'transfers', id)),
+    ...orphanIds.invoicePaymentIds.map((id) => doc(db, 'users', userId, 'invoicePayments', id)),
+    ...orphanIds.recurrenceIds.map((id) => doc(db, 'users', userId, 'recurrences', id)),
+  ];
+
+  if (refsToDelete.length === 0) return;
+
+  try {
+    await batchDeleteRefs(refsToDelete);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `users/${userId}`);
   }
 }
 

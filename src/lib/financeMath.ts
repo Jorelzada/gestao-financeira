@@ -7,6 +7,7 @@ import type {
   Debt,
   InstallmentGroupSummary,
   InvoicePayment,
+  Recurrence,
   Transaction,
   TransactionStatus,
   Transfer,
@@ -166,6 +167,68 @@ export function getTransactionMonthKey(tx: Transaction): string {
     return tx.invoiceMonth;
   }
   return tx.date.slice(0, 7);
+}
+
+/**
+ * Excludes recurrences whose parent account or credit card has been deleted.
+ * Archived accounts/cards remain valid references so historical records are kept.
+ */
+export function filterActiveRecurrences(
+  recurrences: Recurrence[],
+  accounts: Account[],
+  cards: CreditCard[]
+): Recurrence[] {
+  const accountIds = new Set(accounts.map((a) => a.id));
+  const cardIds = new Set(cards.map((c) => c.id));
+  return recurrences.filter((rec) =>
+    rec.paymentMethod === 'card'
+      ? Boolean(rec.cardId) && cardIds.has(rec.cardId)
+      : Boolean(rec.accountId) && accountIds.has(rec.accountId)
+  );
+}
+
+/**
+ * Excludes orphaned transactions whose parent account, credit card, or recurrence
+ * no longer exists. Archived accounts/cards are still included in `accounts`/`cards`
+ * and keep their transactions intact.
+ */
+export function filterActiveTransactions(
+  transactions: Transaction[],
+  accounts: Account[],
+  cards: CreditCard[],
+  recurrences: Recurrence[]
+): Transaction[] {
+  const accountIds = new Set(accounts.map((a) => a.id));
+  const cardIds = new Set(cards.map((c) => c.id));
+  const recurrenceIds = new Set(recurrences.map((r) => r.id));
+
+  return transactions.filter((tx) => {
+    const hasValidOrigin =
+      tx.paymentMethod === 'card'
+        ? Boolean(tx.cardId) && cardIds.has(tx.cardId)
+        : Boolean(tx.accountId) && accountIds.has(tx.accountId);
+    if (!hasValidOrigin) return false;
+    if (tx.recurrenceId && !recurrenceIds.has(tx.recurrenceId)) return false;
+    return true;
+  });
+}
+
+export function filterActiveTransfers(
+  transfers: Transfer[],
+  accounts: Account[]
+): Transfer[] {
+  const accountIds = new Set(accounts.map((a) => a.id));
+  return transfers.filter(
+    (tr) => accountIds.has(tr.fromAccountId) && accountIds.has(tr.toAccountId)
+  );
+}
+
+export function filterActiveInvoicePayments(
+  invoicePayments: InvoicePayment[],
+  cards: CreditCard[]
+): InvoicePayment[] {
+  const cardIds = new Set(cards.map((c) => c.id));
+  return invoicePayments.filter((p) => cardIds.has(p.cardId));
 }
 
 /**

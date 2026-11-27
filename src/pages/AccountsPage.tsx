@@ -344,7 +344,7 @@ export function AccountsPage() {
       <ConfirmDialog
         open={Boolean(deleting)}
         title="Excluir Conta"
-        description={`Deseja excluir a conta "${deleting?.name ?? ''}"? Lançamentos associados permanecerão no histórico.`}
+        description={`Deseja excluir a conta "${deleting?.name ?? ''}"? Os lançamentos, transferências e recorrências vinculados a ela também serão removidos (para manter o histórico, use a opção Arquivar).`}
         confirmLabel="Excluir"
         danger
         busy={busy}

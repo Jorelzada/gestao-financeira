@@ -1,8 +1,16 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { getCurrentMonthKey, shiftMonth } from '../lib/financeMath';
+import {
+  filterActiveInvoicePayments,
+  filterActiveRecurrences,
+  filterActiveTransactions,
+  filterActiveTransfers,
+  getCurrentMonthKey,
+  shiftMonth,
+} from '../lib/financeMath';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
+  cleanupOrphanedRecords,
   ensureUserWorkspace,
   syncRecurrencesThroughNextMonth,
   updateUserTheme,
@@ -220,17 +228,92 @@ export function FinanceDataProvider({ children }: { children: React.ReactNode })
     };
   }, [authReady, user, emailVerified]);
 
+  const activeRecurrences = useMemo(
+    () => (loading ? [] : filterActiveRecurrences(recurrences, accounts, cards)),
+    [loading, recurrences, accounts, cards]
+  );
+
+  const activeTransactions = useMemo(
+    () =>
+      loading
+        ? []
+        : filterActiveTransactions(transactions, accounts, cards, activeRecurrences),
+    [loading, transactions, accounts, cards, activeRecurrences]
+  );
+
+  const activeTransfers = useMemo(
+    () => (loading ? [] : filterActiveTransfers(transfers, accounts)),
+    [loading, transfers, accounts]
+  );
+
+  const activeInvoicePayments = useMemo(
+    () => (loading ? [] : filterActiveInvoicePayments(invoicePayments, cards)),
+    [loading, invoicePayments, cards]
+  );
+
+  const cleanedOrphansUidRef = useRef<string | null>(null);
+
+  // Clean up any pre-existing orphaned documents left in Firestore from past deletions
+  useEffect(() => {
+    if (!user || (!user.isAnonymous && !emailVerified)) {
+      cleanedOrphansUidRef.current = null;
+      return;
+    }
+    if (loading || cleanedOrphansUidRef.current === user.uid) return;
+    cleanedOrphansUidRef.current = user.uid;
+
+    const activeRecIds = new Set(activeRecurrences.map((r) => r.id));
+    const activeTxIds = new Set(activeTransactions.map((t) => t.id));
+    const activeTransferIds = new Set(activeTransfers.map((t) => t.id));
+    const activeInvPayIds = new Set(activeInvoicePayments.map((p) => p.id));
+
+    const orphanRecIds = recurrences.filter((r) => !activeRecIds.has(r.id)).map((r) => r.id);
+    const orphanTxIds = transactions.filter((t) => !activeTxIds.has(t.id)).map((t) => t.id);
+    const orphanTransferIds = transfers.filter((t) => !activeTransferIds.has(t.id)).map((t) => t.id);
+    const orphanInvPayIds = invoicePayments
+      .filter((p) => !activeInvPayIds.has(p.id))
+      .map((p) => p.id);
+
+    if (
+      orphanRecIds.length === 0 &&
+      orphanTxIds.length === 0 &&
+      orphanTransferIds.length === 0 &&
+      orphanInvPayIds.length === 0
+    ) {
+      return;
+    }
+
+    void cleanupOrphanedRecords(user.uid, {
+      transactionIds: orphanTxIds,
+      transferIds: orphanTransferIds,
+      invoicePaymentIds: orphanInvPayIds,
+      recurrenceIds: orphanRecIds,
+    }).catch(() => undefined);
+  }, [
+    loading,
+    user,
+    emailVerified,
+    recurrences,
+    transactions,
+    transfers,
+    invoicePayments,
+    activeRecurrences,
+    activeTransactions,
+    activeTransfers,
+    activeInvoicePayments,
+  ]);
+
   const syncedBatchKeysRef = useRef<Set<string>>(new Set());
 
   // Automatically propagate active recurrences into current month and next month
   useEffect(() => {
     if (loading || !user || (!user.isAnonymous && !emailVerified)) return;
-    if (recurrences.length === 0) return;
+    if (activeRecurrences.length === 0) return;
 
     const currentMonth = getCurrentMonthKey();
     const nextMonth = shiftMonth(currentMonth, 1);
 
-    const needsSync = recurrences.some((rec) => {
+    const needsSync = activeRecurrences.some((rec) => {
       if (!rec.active) return false;
       if (rec.lastGeneratedMonth && rec.lastGeneratedMonth >= nextMonth) return false;
       const key = `${user.uid}__${rec.id}__${nextMonth}`;
@@ -239,22 +322,25 @@ export function FinanceDataProvider({ children }: { children: React.ReactNode })
 
     if (!needsSync) return;
 
-    for (const rec of recurrences) {
+    for (const rec of activeRecurrences) {
       if (rec.active) {
         syncedBatchKeysRef.current.add(`${user.uid}__${rec.id}__${nextMonth}`);
       }
     }
 
-    void syncRecurrencesThroughNextMonth(user.uid, recurrences, transactions, cards).catch(
-      (err) => {
-        setDataError(
-          err instanceof Error
-            ? err.message
-            : 'Não foi possível sincronizar recorrências para o próximo mês.'
-        );
-      }
-    );
-  }, [loading, user, emailVerified, recurrences, transactions, cards]);
+    void syncRecurrencesThroughNextMonth(
+      user.uid,
+      activeRecurrences,
+      activeTransactions,
+      cards
+    ).catch((err) => {
+      setDataError(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível sincronizar recorrências para o próximo mês.'
+      );
+    });
+  }, [loading, user, emailVerified, activeRecurrences, activeTransactions, cards]);
 
   return (
     <FinanceDataContext.Provider
@@ -271,10 +357,10 @@ export function FinanceDataProvider({ children }: { children: React.ReactNode })
         accounts,
         categories,
         cards,
-        transactions,
-        transfers,
-        invoicePayments,
-        recurrences,
+        transactions: activeTransactions,
+        transfers: activeTransfers,
+        invoicePayments: activeInvoicePayments,
+        recurrences: activeRecurrences,
         budgets,
         goals,
         debts,

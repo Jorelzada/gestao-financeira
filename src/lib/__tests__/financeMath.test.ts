@@ -12,6 +12,8 @@ import {
   computeInvoiceMonth,
   computeMonthlySummary,
   computeNetWorth,
+  filterActiveRecurrences,
+  filterActiveTransactions,
   generateTransactionsCSV,
   getDateForInvoiceMonth,
   getTransactionMonthKey,
@@ -700,5 +702,210 @@ describe('financeMath — Cent-Exact Financial Rules', () => {
     expect(decSummary.expenseCents).toBe(150000);
     expect(decSummary.paidExpenseCents).toBe(0);
     expect(decSummary.pendingExpenseCents).toBe(150000);
+  });
+
+  it('excludes orphaned transactions from deleted accounts, cards, and recurrences while preserving archived ones', () => {
+    const accounts: Account[] = [
+      {
+        id: 'acc_active',
+        userId: 'u1',
+        name: 'Conta Ativa',
+        institution: 'Banco',
+        type: 'checking',
+        initialBalanceCents: 0,
+        color: '#2563EB',
+        archived: false,
+      },
+      {
+        id: 'acc_archived',
+        userId: 'u1',
+        name: 'Conta Arquivada',
+        institution: 'Banco',
+        type: 'checking',
+        initialBalanceCents: 0,
+        color: '#64748B',
+        archived: true,
+      },
+    ];
+
+    const cards: CreditCard[] = [
+      {
+        id: 'card_active',
+        userId: 'u1',
+        name: 'Cartão Ativo',
+        brand: 'Visa',
+        limitCents: 100000,
+        closingDay: 10,
+        dueDay: 17,
+        color: '#0F172A',
+        archived: false,
+      },
+    ];
+
+    const rawRecurrences = [
+      {
+        id: 'rec_valid',
+        userId: 'u1',
+        type: 'expense' as const,
+        description: 'Internet',
+        amountCents: 10000,
+        categoryId: 'c1',
+        paymentMethod: 'account' as const,
+        accountId: 'acc_active',
+        cardId: '',
+        dayOfMonth: 10,
+        frequency: 'monthly' as const,
+        active: true,
+        lastGeneratedMonth: '2026-11',
+      },
+      {
+        id: 'rec_from_deleted_acc',
+        userId: 'u1',
+        type: 'expense' as const,
+        description: 'Recorrência órfã',
+        amountCents: 75000,
+        categoryId: 'c1',
+        paymentMethod: 'account' as const,
+        accountId: 'acc_deleted',
+        cardId: '',
+        dayOfMonth: 10,
+        frequency: 'monthly' as const,
+        active: true,
+        lastGeneratedMonth: '2026-11',
+      },
+    ];
+
+    const activeRecurrences = filterActiveRecurrences(rawRecurrences, accounts, cards);
+    expect(activeRecurrences.map((r) => r.id)).toEqual(['rec_valid']);
+
+    const rawTxs: Transaction[] = [
+      {
+        id: 'tx_valid_acc',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Mercado',
+        amountCents: 75000,
+        date: '2026-11-10',
+        categoryId: 'c1',
+        paymentMethod: 'account',
+        accountId: 'acc_active',
+        cardId: '',
+        invoiceMonth: '',
+        status: 'paid',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+      {
+        id: 'tx_archived_acc',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Histórico Conta Arquivada',
+        amountCents: 15000,
+        date: '2026-11-05',
+        categoryId: 'c1',
+        paymentMethod: 'account',
+        accountId: 'acc_archived',
+        cardId: '',
+        invoiceMonth: '',
+        status: 'paid',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+      {
+        id: 'tx_deleted_acc',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Despesa de conta excluída',
+        amountCents: 75000,
+        date: '2026-11-12',
+        categoryId: 'c1',
+        paymentMethod: 'account',
+        accountId: 'acc_deleted',
+        cardId: '',
+        invoiceMonth: '',
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+      {
+        id: 'tx_deleted_card',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Despesa de cartão excluído',
+        amountCents: 75000,
+        date: '2026-11-14',
+        categoryId: 'c1',
+        paymentMethod: 'card',
+        accountId: '',
+        cardId: 'card_deleted',
+        invoiceMonth: '2026-11',
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: '',
+        notes: '',
+      },
+      {
+        id: 'tx_deleted_rec',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Parcela de recorrência excluída',
+        amountCents: 50000,
+        date: '2026-11-15',
+        categoryId: 'c1',
+        paymentMethod: 'account',
+        accountId: 'acc_active',
+        cardId: '',
+        invoiceMonth: '',
+        status: 'pending',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: 'rec_deleted',
+        notes: '',
+      },
+      {
+        id: 'tx_valid_rec',
+        userId: 'u1',
+        type: 'expense',
+        description: 'Internet',
+        amountCents: 10000,
+        date: '2026-11-10',
+        categoryId: 'c1',
+        paymentMethod: 'account',
+        accountId: 'acc_active',
+        cardId: '',
+        invoiceMonth: '',
+        status: 'paid',
+        installmentGroupId: '',
+        installmentNumber: 1,
+        totalInstallments: 1,
+        recurrenceId: 'rec_valid',
+        notes: '',
+      },
+    ];
+
+    const filteredTxs = filterActiveTransactions(rawTxs, accounts, cards, activeRecurrences);
+    expect(filteredTxs.map((t) => t.id)).toEqual([
+      'tx_valid_acc',
+      'tx_archived_acc',
+      'tx_valid_rec',
+    ]);
+
+    const summary = computeMonthlySummary('2026-11', filteredTxs);
+    // Only 75000 + 15000 + 10000 = 100000 (none of the deleted account/card/recurrence expenses!)
+    expect(summary.expenseCents).toBe(100000);
+    expect(summary.paidExpenseCents).toBe(100000);
+    expect(summary.pendingExpenseCents).toBe(0);
   });
 });

@@ -1070,7 +1070,7 @@ export function CardsPage() {
       <ConfirmDialog
         open={Boolean(deleting)}
         title="Excluir Cartão"
-        description={`Deseja excluir o cartão "${deleting?.name ?? ''}"?`}
+        description={`Deseja excluir o cartão "${deleting?.name ?? ''}"? Os lançamentos, parcelamentos, faturas e recorrências vinculados a ele também serão removidos.`}
         confirmLabel="Excluir"
         danger
         busy={busy}

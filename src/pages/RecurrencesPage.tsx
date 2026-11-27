@@ -670,7 +670,7 @@ export function RecurrencesPage() {
       <ConfirmDialog
         open={Boolean(deleting)}
         title="Excluir Recorrência"
-        description={`Deseja excluir o modelo recorrente "${deleting?.description ?? ''}"? Lançamentos já gerados serão mantidos.`}
+        description={`Deseja excluir o modelo recorrente "${deleting?.description ?? ''}"? Os lançamentos gerados por esta recorrência também serão removidos.`}
         confirmLabel="Excluir"
         danger
         busy={busy}
